@@ -54,7 +54,7 @@ func setupVMDisks(
 	qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=runtime,file=%s,if=virtio,media=cdrom,readonly=on,cache=none", runtimeDiskPath))
 
 	if enableSSH {
-		if err := createISOFromFile(logger, sshAuthorizedKeysDiskPath, sshAuthorizedKeysMountPoint, "authorized_keys"); err != nil {
+		if err := createISOFromFile(logger, sshAuthorizedKeysDiskPath, sshAuthorizedKeysMountPoint+"/authorized_keys", "authorized_keys"); err != nil {
 			return nil, fmt.Errorf("failed to create ISO9660 image: %w", err)
 		}
 		qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=ssh-authorized-keys,file=%s,if=virtio,media=cdrom,cache=none", sshAuthorizedKeysDiskPath))
