@@ -104,6 +104,10 @@ type VirtualMachineSpec struct {
 	ServiceAccountName string                      `json:"serviceAccountName,omitempty"`
 	PodResources       corev1.ResourceRequirements `json:"podResources,omitempty"`
 
+	// BlockDevices exposes raw block PersistentVolumeClaims to the VM as QEMU disks.
+	// +optional
+	BlockDevices []BlockDevice `json:"blockDevices,omitempty"`
+
 	// +kubebuilder:default:=Always
 	// +optional
 	RestartPolicy RestartPolicy `json:"restartPolicy"`
@@ -569,6 +573,49 @@ type EmptyDiskSource struct {
 
 type TmpfsDiskSource struct {
 	Size resource.Quantity `json:"size"`
+}
+
+const blockDeviceDefaultPathPrefix = "/dev/neonvm-block-"
+
+// BlockDevice describes a PersistentVolumeClaim-backed block device attached to the VM.
+type BlockDevice struct {
+	// Name for this block device, must be a DNS_LABEL.
+	Name string `json:"name"`
+	// Override the path inside the runner Pod where the block device is exposed.
+	// +optional
+	DevicePath string `json:"devicePath,omitempty"`
+	// Use an existing PersistentVolumeClaim instead of creating one.
+	// +optional
+	ExistingClaimName string `json:"existingClaimName,omitempty"`
+	// PersistentVolumeClaim specifies how to create a claim that backs this block device.
+	// Required if existingClaimName is empty.
+	// +optional
+	PersistentVolumeClaim *BlockPersistentVolumeClaim `json:"persistentVolumeClaim,omitempty"`
+}
+
+// BlockPersistentVolumeClaim describes a PVC to create for a block device attachment.
+type BlockPersistentVolumeClaim struct {
+	// StorageClassName is the storage class used for the PVC.
+	// +optional
+	StorageClassName *string `json:"storageClassName,omitempty"`
+	// AccessModes defaults to ReadWriteMany if not specified. Live migration requires this mode.
+	// +optional
+	AccessModes []corev1.PersistentVolumeAccessMode `json:"accessModes,omitempty"`
+	// Resources defines the storage requests/limits for the PVC.
+	Resources corev1.VolumeResourceRequirements `json:"resources"`
+}
+
+// RunnerDevicePath returns the path inside the runner Pod for this block device.
+func (b BlockDevice) RunnerDevicePath() string {
+	if b.DevicePath != "" {
+		return b.DevicePath
+	}
+	return BlockDeviceDevicePath(b.Name)
+}
+
+// BlockDeviceDevicePath returns the default runner Pod device path for the given name.
+func BlockDeviceDevicePath(name string) string {
+	return fmt.Sprintf("%s%s", blockDeviceDefaultPathPrefix, name)
 }
 
 type ExtraNetwork struct {

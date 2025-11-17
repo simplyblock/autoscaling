@@ -15,6 +15,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
@@ -39,6 +41,7 @@ func newMigrationTestParams(t *testing.T) *migrationTestParams {
 	scheme.AddKnownTypes(vmv1.SchemeGroupVersion, &vmv1.VirtualMachine{})
 	scheme.AddKnownTypes(vmv1.SchemeGroupVersion, &vmv1.VirtualMachineMigration{})
 	scheme.AddKnownTypes(corev1.SchemeGroupVersion, &corev1.Pod{})
+	scheme.AddKnownTypes(corev1.SchemeGroupVersion, &corev1.PersistentVolumeClaim{})
 
 	params := &migrationTestParams{
 		t:   t,
@@ -255,4 +258,70 @@ func Test_VMM_to_Pending_then_removed(t *testing.T) {
 
 	params.refetchVM(vm)
 	require.Equal(params.t, vm.Status.Phase, vmv1.VmRunning)
+}
+
+func Test_VMM_FailsWhenBlockDeviceNotRWX(t *testing.T) {
+	params := newMigrationTestParams(t)
+	vm := defaultVm()
+	vm.Spec.BlockDevices = []vmv1.BlockDevice{
+		{
+			Name: "extra",
+			PersistentVolumeClaim: &vmv1.BlockPersistentVolumeClaim{
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceStorage: resource.MustParse("1Gi"),
+					},
+				},
+			},
+		},
+	}
+	vm.Status.Phase = vmv1.VmRunning
+	vm.Status.PodIP = "1.2.3.4"
+	params.createVM(vm)
+
+	pvcVolumeMode := corev1.PersistentVolumeBlock
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      blockDevicePVCName(vm, vm.Spec.BlockDevices[0]),
+			Namespace: vm.Namespace,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			VolumeMode:  &pvcVolumeMode,
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: resource.MustParse("1Gi"),
+				},
+			},
+		},
+	}
+	err := params.client.Create(params.ctx, pvc)
+	require.NoError(t, err)
+
+	vmm := &vmv1.VirtualMachineMigration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-migration-block",
+			Namespace: vm.Namespace,
+		},
+		Spec: vmv1.VirtualMachineMigrationSpec{
+			VmName: vm.Name,
+		},
+	}
+	params.createMigration(vmm)
+
+	params.migrationToPending(vmm)
+	params.refetchVM(vm)
+	require.Equal(t, vmv1.VmPreMigrating, vm.Status.Phase)
+
+	params.reconcileSuccess(vmm)
+
+	params.refetchMigration(vmm)
+	require.Equal(t, vmv1.VmmFailed, vmm.Status.Phase)
+	cond := meta.FindStatusCondition(vmm.Status.Conditions, typeDegradedVirtualMachineMigration)
+	require.NotNil(t, cond)
+	require.Contains(t, cond.Message, "ReadWriteMany")
+
+	params.refetchVM(vm)
+	require.Equal(t, vmv1.VmRunning, vm.Status.Phase)
+
 }

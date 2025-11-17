@@ -62,13 +62,6 @@ const (
 	virtualmachineFinalizer = "vm.neon.tech/finalizer"
 )
 
-const (
-	extraDiskVolumeName        = "vm-block-storage"
-	extraDiskDevicePath        = "/dev/nvme0n1"
-	extraDiskStorageClassName  = "simplyblock-csi-sc"
-	extraDiskPVCRequestSizeStr = "1Gi"
-)
-
 // Definitions to manage status conditions
 const (
 	// typeAvailableVirtualMachine represents the status of the Deployment reconciliation
@@ -408,8 +401,8 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 				}
 			}
 
-			if err := r.ensureExtraDiskPVC(ctx, vm); err != nil {
-				log.Error(err, "Failed to ensure extra disk PVC")
+			if err := r.ensureBlockDevicePVCs(ctx, vm); err != nil {
+				log.Error(err, "Failed to ensure block device PVCs")
 				return err
 			}
 
@@ -1034,49 +1027,77 @@ func extractVirtualMachineOvercommitSettingsJSON(spec vmv1.VirtualMachineSpec) *
 }
 
 // podForVirtualMachine returns a VirtualMachine Pod object
-func (r *VMReconciler) ensureExtraDiskPVC(ctx context.Context, vm *vmv1.VirtualMachine) error {
+func (r *VMReconciler) ensureBlockDevicePVCs(ctx context.Context, vm *vmv1.VirtualMachine) error {
 	logger := log.FromContext(ctx)
-	nn := types.NamespacedName{
-		Name:      extraDiskPVCName(vm),
-		Namespace: vm.Namespace,
-	}
 
-	current := &corev1.PersistentVolumeClaim{}
-	if err := r.Get(ctx, nn, current); err == nil {
-		return nil
-	} else if !apierrors.IsNotFound(err) {
-		return err
-	}
+	for _, device := range vm.Spec.BlockDevices {
+		if device.ExistingClaimName != "" {
+			if device.PersistentVolumeClaim != nil {
+				return fmt.Errorf("blockDevice %q cannot set both existingClaimName and persistentVolumeClaim", device.Name)
+			}
+			continue
+		}
+		if device.PersistentVolumeClaim == nil {
+			return fmt.Errorf("blockDevice %q requires persistentVolumeClaim when existingClaimName is empty", device.Name)
+		}
+		nn := types.NamespacedName{
+			Name:      blockDevicePVCName(vm, device),
+			Namespace: vm.Namespace,
+		}
 
-	requestSize := resource.MustParse(extraDiskPVCRequestSizeStr)
-	pvc := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      nn.Name,
-			Namespace: nn.Namespace,
-			Labels:    labelsForVirtualMachine(vm),
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: requestSize,
-				},
+		current := &corev1.PersistentVolumeClaim{}
+		if err := r.Get(ctx, nn, current); err == nil {
+			continue
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+
+		pvc := &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      nn.Name,
+				Namespace: nn.Namespace,
+				Labels:    labelsForVirtualMachine(vm),
 			},
-			VolumeMode: lo.ToPtr(corev1.PersistentVolumeBlock),
-		},
-	}
-	pvc.Spec.StorageClassName = lo.ToPtr(extraDiskStorageClassName)
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: getBlockAccessModes(device.PersistentVolumeClaim.AccessModes),
+				VolumeMode:  lo.ToPtr(corev1.PersistentVolumeBlock),
+			},
+		}
+		if device.PersistentVolumeClaim.StorageClassName != nil {
+			pvc.Spec.StorageClassName = lo.ToPtr(*device.PersistentVolumeClaim.StorageClassName)
+		}
+		var resources corev1.VolumeResourceRequirements
+		device.PersistentVolumeClaim.Resources.DeepCopyInto(&resources)
+		pvc.Spec.Resources = resources
 
-	if err := ctrl.SetControllerReference(vm, pvc, r.Scheme); err != nil {
-		return err
+		if err := ctrl.SetControllerReference(vm, pvc, r.Scheme); err != nil {
+			return err
+		}
+
+		logger.Info("Creating PVC for block device", "VirtualMachine", vm.Name, "BlockDevice", device.Name, "PVC", pvc.Name)
+		if err := r.Create(ctx, pvc); err != nil {
+			return err
+		}
 	}
 
-	logger.Info("Creating PVC for extra VM disk", "VirtualMachine", vm.Name, "PVC", pvc.Name)
-	return r.Create(ctx, pvc)
+	return nil
 }
 
-func extraDiskPVCName(vm *vmv1.VirtualMachine) string {
-	return fmt.Sprintf("%s-block-pvc", vm.Name)
+func getBlockAccessModes(modes []corev1.PersistentVolumeAccessMode) []corev1.PersistentVolumeAccessMode {
+	if len(modes) == 0 {
+		return []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
+	}
+	out := make([]corev1.PersistentVolumeAccessMode, len(modes))
+	copy(out, modes)
+	return out
+}
+
+func blockDevicePVCName(vm *vmv1.VirtualMachine, device vmv1.BlockDevice) string {
+	return fmt.Sprintf("%s-block-%s", vm.Name, device.Name)
+}
+
+func blockDeviceVolumeName(device vmv1.BlockDevice) string {
+	return fmt.Sprintf("block-%s", device.Name)
 }
 
 func (r *VMReconciler) podForVirtualMachine(
@@ -1497,22 +1518,28 @@ func podSpec(
 		},
 	}
 
-	// Attach the extra PVC-backed block device for testing.
-	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-		Name: extraDiskVolumeName,
-		VolumeSource: corev1.VolumeSource{
-			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-				ClaimName: extraDiskPVCName(vm),
+	for _, device := range vm.Spec.BlockDevices {
+		claimName := device.ExistingClaimName
+		if claimName == "" {
+			claimName = blockDevicePVCName(vm, device)
+		}
+		volumeName := blockDeviceVolumeName(device)
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: volumeName,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: claimName,
+				},
 			},
-		},
-	})
-	pod.Spec.Containers[0].VolumeDevices = append(
-		pod.Spec.Containers[0].VolumeDevices,
-		corev1.VolumeDevice{
-			Name:       extraDiskVolumeName,
-			DevicePath: extraDiskDevicePath,
-		},
-	)
+		})
+		pod.Spec.Containers[0].VolumeDevices = append(
+			pod.Spec.Containers[0].VolumeDevices,
+			corev1.VolumeDevice{
+				Name:       volumeName,
+				DevicePath: device.RunnerDevicePath(),
+			},
+		)
+	}
 
 	if sshSecret != nil {
 		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts,
