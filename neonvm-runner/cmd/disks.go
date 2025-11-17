@@ -29,6 +29,9 @@ const (
 	sshAuthorizedKeysMountPoint = "/vm/ssh"
 
 	swapName = "swapdisk"
+
+	extraBlockDevicePath = "/dev/nvme0n1"
+	extraBlockDriveID    = "extradisk"
 )
 
 // setupVMDisks creates the disks for the VM and returns the appropriate QEMU args
@@ -59,6 +62,17 @@ func setupVMDisks(
 			return nil, fmt.Errorf("failed to create swap disk: %w", err)
 		}
 		qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=%s,file=%s,if=virtio,media=disk,%s,discard=unmap", swapName, dPath, diskCacheSettings))
+	}
+
+	if _, err := os.Stat(extraBlockDevicePath); err == nil {
+		logger.Info("attaching extra block device", zap.String("devicePath", extraBlockDevicePath))
+		qemuCmd = append(
+			qemuCmd,
+			"-drive",
+			fmt.Sprintf("id=%s,file=%s,if=virtio,format=raw,media=disk,cache=none", extraBlockDriveID, extraBlockDevicePath),
+		)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		logger.Warn("failed to stat extra block device", zap.String("devicePath", extraBlockDevicePath), zap.Error(err))
 	}
 
 	for _, disk := range extraDisks {

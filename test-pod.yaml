@@ -1,0 +1,111 @@
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vm-manohar-dev-mbx99
+  namespace: default
+  labels:
+    app.kubernetes.io/name: NeonVM
+    vm.neon.tech/name: vm-manohar-dev
+  annotations:
+    kubectl.kubernetes.io/default-container: neonvm-runner
+    vm.neon.tech/resources: '{"cpus":{"min":1,"max":1,"use":1},"memorySlots":{"min":1,"max":1,"use":1},"memorySlotSize":"1Gi"}'
+    vm.neon.tech/usage: '{"cpu":"1","memory":"1Gi"}'
+spec:
+  initContainers:
+  - name: init
+    image: docker.io/manoharbrm/test-vm:dev
+    command:
+      - sh
+      - -c
+      - >
+        mv /disk.qcow2 /vm/images/rootdisk.qcow2 &&
+        chown 36:34 /vm/images/rootdisk.qcow2 &&
+        sysctl -w net.ipv4.ip_forward=1
+    volumeMounts:
+      - mountPath: /vm/images
+        name: virtualmachineimages
+    securityContext:
+      privileged: true
+
+  containers:
+  - name: neonvm-runner
+    image: ghcr.io/neondatabase/neonvm-runner:v0.49.1
+    command:
+      - runner
+      - -skip-cgroup-management
+      - -use-virtio-console
+      - -qemu-disk-cache-settings
+      - cache.writeback=on,cache.direct=on,cache.no-flush=on
+      - -memhp-auto-movable-ratio
+      - "401"
+      - -vmspec
+      - H4sIAAAAAAAA/3yQwW4aMRCG3+U/u4WlRap8Q6pEewBtu09gvAOxsD2b8RhC0L57tBCinHKy9c33+5fniuc0wC7mza8fZrpvXK4u3slPA6k5k7QsCrtY3iQlSSE7DZzX4jy1JIH7jjznvsAuDQbu/1PhKp4K7HU0ECrqRFuOwV9gsYpndykwOFQqCnuFH+rkIoUM2xgk93I7ayHYZjRIlFguXWTtwivBolkHfMZfx4VZf4dynKSQ3GF6oWd/JPkeeJZc5icnO0kzpaLfTsn2dIJBuXfNYe6ptsb48Yu/+y1rK1QoK8bRgLLbRVp5T5HktiFYlUqPSdf9eQA/1M67GPJhw/1U8S8N7wAPfUt6ZjluOAdlmSZ272Kh8S0AAP//TwRzArYBAAA=
+      - -vmstatus
+      - H4sIAAAAAAAA/7yPT0sDMRDFv8oyJwsb2O0frLmJXhXRxYPiYZpMu4FkUjLJtqX0u8tWEezNi8eB95v3fkcwka3LLrKAfj9CPmwJNNwO6DyuPEENkjEXAQ1dKuPtUXKXkOWMdS6MwLSZLlTbqnbetdd6Ntfz9g1qSIQSGTQ8k4lsnHe8gRoCieBm5J6ira6GoAJy7DEpS4Pa3+x3u0m1jql6dSkX9A9oesd0mZxUJhFmspUUY0hkXbw/wKn+8binTUJL9s8ai65pdDPTs+V/aKzRebJw+qhh26OcPxLbr5ZEkjHlu1g4g25r2Eb7iOe5F41htV8uR1XpX8gkyt8xkV4xRR6C+k3A6TMAAP//vuNfBAECAAA=
+      - -cpu-scaling-mode
+      - QmpScaling
+    ports:
+      - containerPort: 20183
+      - containerPort: 20184
+      - containerPort: 25183
+    resources:
+      requests:
+        neonvm/kvm: 1
+        neonvm/vhost-net: 1
+      limits:
+        neonvm/kvm: 1
+        neonvm/vhost-net: 1
+    readinessProbe:
+      httpGet:
+        port: 25183
+        path: "/ready"
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 1
+      successThreshold: 1
+      failureThreshold: 3
+    env:
+      - name: K8S_POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+    volumeDevices:
+      - name: vm-block-storage
+        devicePath: /dev/blockdisk
+    volumeMounts:
+      - mountPath: /vm/images
+        name: virtualmachineimages
+      - mountPath: /mnt/ssh
+        name: ssh-privatekey
+      - mountPath: /vm/ssh
+        name: ssh-publickey
+    securityContext:
+      privileged: true          # <-- THIS is the main addition
+
+  volumes:
+    - name: virtualmachineimages
+      emptyDir: {}
+    - name: ssh-privatekey
+      secret:
+        secretName: ssh-neonvm-vm-manohar-dev
+    - name: ssh-publickey
+      secret:
+        secretName: ssh-neonvm-vm-manohar-dev
+    - name: vm-block-storage
+      persistentVolumeClaim:
+        claimName: vm-block-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vm-block-pvc
+spec:
+  storageClassName: simplyblock-csi-sc
+  volumeMode: Block
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+EOF

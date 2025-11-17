@@ -62,6 +62,13 @@ const (
 	virtualmachineFinalizer = "vm.neon.tech/finalizer"
 )
 
+const (
+	extraDiskVolumeName        = "vm-block-storage"
+	extraDiskDevicePath        = "/dev/nvme0n1"
+	extraDiskStorageClassName  = "simplyblock-csi-sc"
+	extraDiskPVCRequestSizeStr = "1Gi"
+)
+
 // Definitions to manage status conditions
 const (
 	// typeAvailableVirtualMachine represents the status of the Deployment reconciliation
@@ -89,6 +96,7 @@ type VMReconciler struct {
 //+kubebuilder:rbac:groups=vm.neon.tech,resources=virtualmachines/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=pods/status,verbs=get;list;watch
 //+kubebuilder:rbac:groups=vm.neon.tech,resources=ippools,verbs=get;list;watch;create;update;patch;delete
@@ -398,6 +406,11 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 					log.Error(err, "Failed to get SSH Secret")
 					return err
 				}
+			}
+
+			if err := r.ensureExtraDiskPVC(ctx, vm); err != nil {
+				log.Error(err, "Failed to ensure extra disk PVC")
+				return err
 			}
 
 			// Define a new pod
@@ -1021,6 +1034,51 @@ func extractVirtualMachineOvercommitSettingsJSON(spec vmv1.VirtualMachineSpec) *
 }
 
 // podForVirtualMachine returns a VirtualMachine Pod object
+func (r *VMReconciler) ensureExtraDiskPVC(ctx context.Context, vm *vmv1.VirtualMachine) error {
+	logger := log.FromContext(ctx)
+	nn := types.NamespacedName{
+		Name:      extraDiskPVCName(vm),
+		Namespace: vm.Namespace,
+	}
+
+	current := &corev1.PersistentVolumeClaim{}
+	if err := r.Get(ctx, nn, current); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	requestSize := resource.MustParse(extraDiskPVCRequestSizeStr)
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      nn.Name,
+			Namespace: nn.Namespace,
+			Labels:    labelsForVirtualMachine(vm),
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+			Resources: corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: requestSize,
+				},
+			},
+			VolumeMode: lo.ToPtr(corev1.PersistentVolumeBlock),
+		},
+	}
+	pvc.Spec.StorageClassName = lo.ToPtr(extraDiskStorageClassName)
+
+	if err := ctrl.SetControllerReference(vm, pvc, r.Scheme); err != nil {
+		return err
+	}
+
+	logger.Info("Creating PVC for extra VM disk", "VirtualMachine", vm.Name, "PVC", pvc.Name)
+	return r.Create(ctx, pvc)
+}
+
+func extraDiskPVCName(vm *vmv1.VirtualMachine) string {
+	return fmt.Sprintf("%s-block-pvc", vm.Name)
+}
+
 func (r *VMReconciler) podForVirtualMachine(
 	vm *vmv1.VirtualMachine,
 	sshSecret *corev1.Secret,
@@ -1307,10 +1365,10 @@ func podSpec(
 					Image:           image,
 					Name:            "neonvm-runner",
 					ImagePullPolicy: corev1.PullIfNotPresent,
-					// Ensure restrictive context for the container
+					// Runner has to run privileged to manage VM devices directly.
 					// More info: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
 					SecurityContext: &corev1.SecurityContext{
-						Privileged: lo.ToPtr(false),
+						Privileged: lo.ToPtr(true),
 						Capabilities: &corev1.Capabilities{
 							Add: []corev1.Capability{
 								"NET_ADMIN",
@@ -1438,6 +1496,23 @@ func podSpec(
 			}(),
 		},
 	}
+
+	// Attach the extra PVC-backed block device for testing.
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: extraDiskVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: extraDiskPVCName(vm),
+			},
+		},
+	})
+	pod.Spec.Containers[0].VolumeDevices = append(
+		pod.Spec.Containers[0].VolumeDevices,
+		corev1.VolumeDevice{
+			Name:       extraDiskVolumeName,
+			DevicePath: extraDiskDevicePath,
+		},
+	)
 
 	if sshSecret != nil {
 		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts,
