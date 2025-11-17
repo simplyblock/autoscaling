@@ -23,8 +23,34 @@ for i in ${ETH_LIST}; do
     udhcpc -t 1 -T 1 -A 1 -b -q -i $iface -O 121 -O 119
 done
 
+# Prepare optional external data disk (virtio block device "data").
+DATA_DEV="/dev/disk/by-id/virtio-data"
+if [ ! -b "$DATA_DEV" ]; then
+  DATA_DEV="/dev/vdb"
+fi
+
+if [ -b "$DATA_DEV" ]; then
+  echo "Configuring external data volume on $DATA_DEV"
+  mkdir -p /data
+  if ! blkid "$DATA_DEV" >/dev/null 2>&1; then
+    echo "Formatting $DATA_DEV as ext4"
+    mkfs.ext4 -F "$DATA_DEV"
+  fi
+  if ! mount | grep -q " /data "; then
+    mount "$DATA_DEV" /data
+  fi
+  chown postgres:postgres /data
+  if [ ! -f /data/PG_VERSION ]; then
+    echo "Initializing new Postgres data directory under /data"
+    su-exec postgres initdb -D /data
+  fi
+  export PGDATA=/data
+else
+  echo "External data disk not found; using image root volume"
+  export PGDATA=/var/lib/postgresql
+fi
+
 # postgresql init and start
-export PGDATA=/var/lib/postgresql
 su-exec postgres pg_ctl start -o '-c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/postgresql/pg_hba.conf'
 
 echo -e "\nBoot took $(cut -d' ' -f1 /proc/uptime) seconds\n"

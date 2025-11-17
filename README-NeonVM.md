@@ -33,7 +33,7 @@ metadata:
 spec:
   guest:
     rootDisk:
-      image: docker.io/manoharbrm/test-vm:dev
+      image: docker.io/manoharbrm/pg16-test:dev
     cpus: { min: 1, use: 1, max: 1 }
     memorySlots: { min: 1, use: 1, max: 1 }
 EOF
