@@ -47,7 +47,10 @@ func setupVMDisks(
 ) ([]string, error) {
 	var qemuCmd []string
 
-	qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=rootdisk,file=%s,if=virtio,media=disk,index=0,%s", rootDiskPath, diskCacheSettings))
+	qemuCmd = append(qemuCmd,
+		"-drive", fmt.Sprintf("file=%s,if=none,id=rootdisk,format=qcow2,media=disk,%s", rootDiskPath, diskCacheSettings),
+		"-device", "virtio-blk-pci,drive=rootdisk,bootindex=1",
+	)
 	qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=runtime,file=%s,if=virtio,media=cdrom,readonly=on,cache=none", runtimeDiskPath))
 
 	if enableSSH {
@@ -106,7 +109,7 @@ func setupVMDisks(
 			"-drive",
 			fmt.Sprintf("file=%s,if=none,id=%s,format=raw,media=disk,cache=none", devicePath, driveID),
 			"-device",
-			fmt.Sprintf("virtio-blk-pci,drive=%s,serial=%s", driveID, block.Name),
+			fmt.Sprintf("virtio-blk-pci,drive=%s,serial=%s,bootindex=3", driveID, block.Name),
 		)
 	}
 
