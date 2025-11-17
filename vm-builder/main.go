@@ -22,6 +22,7 @@ import (
 	contextstore "github.com/docker/cli/cli/context/store"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/jsonmessage"
@@ -263,7 +264,7 @@ func main() {
 
 	hostContainsSrcImage := false
 	if !*forcePull {
-		hostImages, err := cli.ImageList(ctx, types.ImageListOptions{})
+		hostImages, err := cli.ImageList(ctx, image.ListOptions{})
 		if err != nil {
 			log.Fatalln(err) //nolint:gocritic // linter complains that Fatalln circumvents deferred cli.Close(). Too much work to fix in #721, leaving for later.
 		}
@@ -291,7 +292,7 @@ func main() {
 			}
 			reg := reference.Domain(named)
 
-			imagePullOptions := types.ImagePullOptions{}
+			imagePullOptions := image.PullOptions{}
 			if authConfig, ok := authConfigs[reg]; ok {
 				encoded, err := registry.EncodeAuthConfig(authConfig)
 				if err != nil {
@@ -535,7 +536,11 @@ func main() {
 			}
 		}
 		// remove container
-		if err = cli.ContainerRemove(ctx, containerResp.ID, types.ContainerRemoveOptions{}); err != nil {
+		if err = cli.ContainerRemove(ctx, containerResp.ID, container.RemoveOptions{
+			Force:         true,
+			RemoveVolumes: true,
+			RemoveLinks:   false,
+		}); err != nil {
 			log.Println(err)
 		}
 
