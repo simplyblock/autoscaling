@@ -109,3 +109,26 @@ spec:
     requests:
       storage: 1Gi
 EOF
+
+
+cat <<EOF | kubectl apply -f -
+apiVersion: vm.neon.tech/v1
+kind: VirtualMachine
+metadata:
+  name: vm-manohar-dev
+spec:
+  guest:
+    rootDisk:
+      image: docker.io/manoharbrm/test-vm:dev
+    cpus: { min: 1, use: 1, max: 1 }
+    memorySlots: { min: 1, use: 1, max: 1 }
+  blockDevices:
+    - name: data
+      persistentVolumeClaim:
+        storageClassName: simplyblock-csi-sc
+        accessModes:
+          - ReadWriteMany
+        resources:
+          requests:
+            storage: 5Gi
+EOF
