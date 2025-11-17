@@ -21,10 +21,31 @@ commands:
     user: root
     sysvInitAction: respawn
     shell: 'cat /tmp/neon-logs.fifo > /dev/virtio-ports/tech.neon.log.0'
+  - name: prepare-data-volume
+    user: root
+    sysvInitAction: wait
+    shell: |
+      set -euo pipefail
+      DEVICE="/dev/disk/by-id/virtio-data"
+      if [ ! -b "$DEVICE" ]; then
+        DEVICE="/dev/vdb"
+      fi
+      mkdir -p /data
+      if ! blkid "$DEVICE" >/dev/null 2>&1; then
+        mkfs.ext4 -F "$DEVICE"
+      fi
+      if ! mountpoint -q /data; then
+        mount "$DEVICE" /data
+      fi
+      if ! grep -q "/data" /etc/fstab; then
+        UUID="$(blkid -s UUID -o value "$DEVICE")"
+        echo "UUID=${UUID} /data ext4 defaults 0 2" >> /etc/fstab
+      fi
+      chown postgres:postgres /data
   - name: start-postgres
     user: postgres
     sysvInitAction: once
-    shell: 'PGDATA=/var/lib/postgresql pg_ctl start -o "-c config_file=/etc/postgresql.conf -c hba_file=/etc/pg_hba.conf" -l /tmp/neon-logs.fifo'
+    shell: 'PGDATA=/data pg_ctl start -o "-c config_file=/etc/postgresql.conf -c hba_file=/etc/pg_hba.conf" -l /tmp/neon-logs.fifo'
 files:
   - filename: postgresql.conf
     hostPath: postgresql.conf

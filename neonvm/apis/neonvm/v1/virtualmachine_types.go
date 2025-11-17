@@ -591,9 +591,6 @@ type BlockDevice struct {
 	// Required if existingClaimName is empty.
 	// +optional
 	PersistentVolumeClaim *BlockPersistentVolumeClaim `json:"persistentVolumeClaim,omitempty"`
-	// Mount describes how this disk should appear inside the guest.
-	// +optional
-	Mount *BlockDeviceMount `json:"mount,omitempty"`
 }
 
 // BlockPersistentVolumeClaim describes a PVC to create for a block device attachment.
@@ -619,18 +616,6 @@ func (b BlockDevice) RunnerDevicePath() string {
 // BlockDeviceDevicePath returns the default runner Pod device path for the given name.
 func BlockDeviceDevicePath(name string) string {
 	return fmt.Sprintf("%s%s", blockDeviceDefaultPathPrefix, name)
-}
-
-// BlockDeviceMount describes how to mount a block device inside a VM.
-type BlockDeviceMount struct {
-	// Path where the filesystem will be mounted inside the guest (for example, /data).
-	Path string `json:"path"`
-	// Filesystem type for the block device. Defaults to ext4.
-	// +optional
-	Filesystem string `json:"filesystem,omitempty"`
-	// FormatIfNeeded formats the device when it has no filesystem. Defaults to true.
-	// +optional
-	FormatIfNeeded *bool `json:"formatIfNeeded,omitempty"`
 }
 
 type ExtraNetwork struct {

@@ -1012,25 +1012,6 @@ spec:
                       description: Use an existing PersistentVolumeClaim instead of
                         creating one.
                       type: string
-                    mount:
-                      description: Mount describes how this disk should appear inside
-                        the guest.
-                      properties:
-                        filesystem:
-                          description: Filesystem type for the block device. Defaults
-                            to ext4.
-                          type: string
-                        formatIfNeeded:
-                          description: FormatIfNeeded formats the device when it has
-                            no filesystem. Defaults to true.
-                          type: boolean
-                        path:
-                          description: Path where the filesystem will be mounted inside
-                            the guest (for example, /data).
-                          type: string
-                      required:
-                      - path
-                      type: object
                     name:
                       description: Name for this block device, must be a DNS_LABEL.
                       type: string

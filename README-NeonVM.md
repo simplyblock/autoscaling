@@ -36,18 +36,6 @@ spec:
       image: docker.io/manoharbrm/test-vm:dev
     cpus: { min: 1, use: 1, max: 1 }
     memorySlots: { min: 1, use: 1, max: 1 }
-  blockDevices:
-    - name: data
-      persistentVolumeClaim:
-        storageClassName: simplyblock-csi-sc
-        accessModes:
-          - ReadWriteMany
-        resources:
-          requests:
-            storage: 5Gi
-      mount:
-        path: /data
-        filesystem: ext4
 EOF
 
 cat <<EOF | kubectl apply -f -
@@ -58,6 +46,10 @@ metadata:
 spec:
   vmName: vm-test-dev
 EOF
+
+### Attaching raw block devices
+
+You can expose additional PVC-backed block devices via `spec.blockDevices`. These disks are presented to the guest as raw virtio devices (for example `/dev/vdb`). The guest image is responsible for creating a filesystem, mounting it, and ensuring it is ready before your application starts. See `vm-examples/pg16-disk-test` for an example `image-spec.yaml` that formats `/dev/vdb` as ext4 and mounts it at `/data` before PostgreSQL launches.
 ```
 
 ### Check virtual machine running

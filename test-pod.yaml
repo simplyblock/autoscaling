@@ -132,4 +132,7 @@ spec:
         resources:
           requests:
             storage: 5Gi
+      mount:
+        path: /data
+        filesystem: ext4
 EOF

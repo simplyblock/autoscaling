@@ -9,9 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/alessio/shellescape"
 	"github.com/kdomanski/iso9660"
@@ -31,9 +29,6 @@ const (
 	sshAuthorizedKeysMountPoint = "/vm/ssh"
 
 	swapName = "swapdisk"
-
-	blockDevicePollInterval = 100 * time.Millisecond
-	blockDeviceWaitTimeout  = 30 * time.Second
 )
 
 // setupVMDisks creates the disks for the VM and returns the appropriate QEMU args
@@ -47,17 +42,15 @@ func setupVMDisks(
 ) ([]string, error) {
 	var qemuCmd []string
 
-	qemuCmd = append(qemuCmd,
-		"-drive", fmt.Sprintf("file=%s,if=none,id=rootdisk,media=disk,%s", rootDiskPath, diskCacheSettings),
-		"-device", "virtio-blk-pci,drive=rootdisk,bootindex=1",
-	)
+	qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=rootdisk,file=%s,if=virtio,media=disk,index=0,%s", rootDiskPath, diskCacheSettings))
 	qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=runtime,file=%s,if=virtio,media=cdrom,readonly=on,cache=none", runtimeDiskPath))
 
 	if enableSSH {
-		if err := createISOFromFile(logger, sshAuthorizedKeysDiskPath, sshAuthorizedKeysMountPoint+"/authorized_keys", "authorized_keys"); err != nil {
+		name := "ssh-authorized-keys"
+		if err := createISO9660FromPath(logger, name, sshAuthorizedKeysDiskPath, sshAuthorizedKeysMountPoint); err != nil {
 			return nil, fmt.Errorf("failed to create ISO9660 image: %w", err)
 		}
-		qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=ssh-authorized-keys,file=%s,if=virtio,media=cdrom,cache=none", sshAuthorizedKeysDiskPath))
+		qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=%s,file=%s,if=virtio,media=cdrom,cache=none", name, sshAuthorizedKeysDiskPath))
 	}
 
 	if swapSize != nil {
@@ -97,18 +90,19 @@ func setupVMDisks(
 
 	for _, block := range blockDevices {
 		devicePath := block.RunnerDevicePath()
-		if err := waitForBlockDevice(devicePath, blockDeviceWaitTimeout); err != nil {
-			logger.Warn("block device path not ready", zap.String("blockDevice", block.Name), zap.String("devicePath", devicePath), zap.Error(err))
+		if _, err := os.Stat(devicePath); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				logger.Warn("block device path not found", zap.String("blockDevice", block.Name), zap.String("devicePath", devicePath))
+			} else {
+				logger.Warn("failed to stat block device", zap.String("blockDevice", block.Name), zap.String("devicePath", devicePath), zap.Error(err))
+			}
 			continue
 		}
 		logger.Info("attaching block device", zap.String("blockDevice", block.Name), zap.String("devicePath", devicePath))
-		driveID := fmt.Sprintf("blk-%s", block.Name)
 		qemuCmd = append(
 			qemuCmd,
 			"-drive",
-			fmt.Sprintf("file=%s,if=none,id=%s,format=raw,media=disk,cache=none", devicePath, driveID),
-			"-device",
-			fmt.Sprintf("virtio-blk-pci,drive=%s,serial=%s,bootindex=3", driveID, block.Name),
+			fmt.Sprintf("id=%s,file=%s,if=virtio,format=raw,media=disk,cache=none", block.Name, devicePath),
 		)
 	}
 
@@ -208,8 +202,6 @@ func createISO9660runtime(
 		mounts = append(mounts, fmt.Sprintf("/neonvm/bin/sh /neonvm/runtime/resize-swap-internal.sh %d", swapSize.Value()))
 	}
 
-	needBlockDeviceMountScript := false
-
 	if len(disks) != 0 {
 		for _, disk := range disks {
 			if disk.MountPath != "" {
@@ -245,22 +237,6 @@ func createISO9660runtime(
 		}
 	}
 
-	if len(blockDevices) != 0 {
-		for _, block := range blockDevices {
-			if block.Mount == nil || len(block.Mount.Path) == 0 {
-				continue
-			}
-			needBlockDeviceMountScript = true
-			mountPath := block.Mount.Path
-			filesystem := blockDeviceFilesystem(block)
-			formatFlag := strconv.FormatBool(blockDeviceFormatIfNeeded(block))
-			mounts = append(mounts, fmt.Sprintf(`/neonvm/bin/mkdir -p %s`, mountPath))
-			mounts = append(mounts,
-				fmt.Sprintf(`/neonvm/bin/sh /neonvm/runtime/mount-block-device.sh %q %q %q %q`,
-					block.Name, filesystem, mountPath, formatFlag))
-		}
-	}
-
 	if shmsize != nil {
 		mounts = append(mounts, fmt.Sprintf(`/neonvm/bin/mount -o remount,size=%d /dev/shm`, shmsize.Value()))
 	}
@@ -293,43 +269,6 @@ func createISO9660runtime(
 			`swapon -d "$swapdisk"`,
 		}
 		err = writer.AddFile(bytes.NewReader([]byte(strings.Join(lines, "\n"))), "resize-swap-internal.sh")
-		if err != nil {
-			return err
-		}
-	}
-
-	if needBlockDeviceMountScript {
-		lines := []string{
-			`#!/neonvm/bin/sh`,
-			`set -euo pipefail`,
-			`export PATH="/neonvm/bin"`,
-			`device_id="$1"`,
-			`filesystem="$2"`,
-			`mount_path="$3"`,
-			`format_flag="$4"`,
-			`device="/dev/disk/by-id/virtio-${device_id}"`,
-			`for _ in $(seq 1 120); do`,
-			`	if [ -b "$device" ]; then`,
-			`		break`,
-			`	fi`,
-			`	sleep 1`,
-			`done`,
-			`if [ ! -b "$device" ]; then`,
-			`	echo "block device $device not found" >&2`,
-			`	exit 1`,
-			`fi`,
-			`if [ "$format_flag" = "true" ]; then`,
-			`	if ! blkid "$device" >/dev/null 2>&1; then`,
-			`		case "$filesystem" in`,
-			`			ext4) mkfs.ext4 -F "$device" ;;`,
-			`			xfs) mkfs.xfs -f "$device" ;;`,
-			`			*) mkfs."$filesystem" "$device" ;;`,
-			`		esac`,
-			`	fi`,
-			`fi`,
-			`mount -t "$filesystem" "$device" "$mount_path"`,
-		}
-		err = writer.AddFile(bytes.NewReader([]byte(strings.Join(lines, "\n"))), "mount-block-device.sh")
 		if err != nil {
 			return err
 		}
@@ -393,36 +332,6 @@ func calcDirUsage(dirPath string) (int64, error) {
 		size += s
 	}
 	return size, nil
-}
-
-func blockDeviceFilesystem(block vmv1.BlockDevice) string {
-	if block.Mount != nil && block.Mount.Filesystem != "" {
-		return block.Mount.Filesystem
-	}
-	return "ext4"
-}
-
-func blockDeviceFormatIfNeeded(block vmv1.BlockDevice) bool {
-	if block.Mount == nil || block.Mount.FormatIfNeeded == nil {
-		return true
-	}
-	return *block.Mount.FormatIfNeeded
-}
-
-func waitForBlockDevice(devicePath string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		if _, err := os.Stat(devicePath); err == nil {
-			return nil
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-
-		if time.Now().After(deadline) {
-			return fmt.Errorf("device %s did not appear within %s", devicePath, timeout)
-		}
-		time.Sleep(blockDevicePollInterval)
-	}
 }
 
 func createSwap(diskPath string, swapSize *resource.Quantity) error {
@@ -585,41 +494,4 @@ func createISO9660FromPath(logger *zap.Logger, diskName string, diskPath string,
 	}
 
 	return nil
-}
-
-func createISOFromFile(logger *zap.Logger, diskPath string, filePath string, outputName string) error {
-	writer, err := iso9660.NewWriter()
-	if err != nil {
-		return err
-	}
-	defer writer.Cleanup() //nolint:errcheck
-
-	logger.Info("adding file to ISO9660 disk", zap.String("path", outputName))
-	if err := writer.AddFile(bytes.NewReader([]byte{}), ".keep"); err != nil {
-		return err
-	}
-	file, err := os.Open(filePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	if err := writer.AddFile(file, outputName); err != nil {
-		return err
-	}
-
-	outputFile, err := os.OpenFile(diskPath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o644)
-	if err != nil {
-		return err
-	}
-
-	if err := outputFile.Chown(36, 34); err != nil {
-		return err
-	}
-
-	if err := writer.WriteTo(outputFile, "ssh-authorized-keys"); err != nil {
-		return err
-	}
-
-	return outputFile.Close()
 }
