@@ -61,6 +61,18 @@ spec:
         port: 9187
   extraNetwork:
       enable: true
+  blockDevices:
+    - name: data
+      persistentVolumeClaim:
+        storageClassName: simplyblock-csi-sc
+        accessModes:
+          - ReadWriteMany
+        resources:
+          requests:
+            storage: 20Gi
+      mount:
+        path: /data
+        filesystem: ext4
   disks:
     - name: pgdata
       mountPath: /var/lib/postgresql

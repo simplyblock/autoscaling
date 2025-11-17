@@ -36,6 +36,18 @@ spec:
       image: docker.io/manoharbrm/test-vm:dev
     cpus: { min: 1, use: 1, max: 1 }
     memorySlots: { min: 1, use: 1, max: 1 }
+  blockDevices:
+    - name: data
+      persistentVolumeClaim:
+        storageClassName: simplyblock-csi-sc
+        accessModes:
+          - ReadWriteMany
+        resources:
+          requests:
+            storage: 5Gi
+      mount:
+        path: /data
+        filesystem: ext4
 EOF
 
 cat <<EOF | kubectl apply -f -
@@ -317,4 +329,3 @@ qemu-system-x86_64 -runas qemu -machine q35 -nographic -no-reboot -nodefaults -o
 -device virtio-net-pci,mq=on,vectors=10,netdev=default,mac=d6:1f:0d:3f:fc:fd \
 -kernel /vm/kernel/vmlinuz \
 -append "panic=-1 init=/neonvm/bin/init loglevel=6 root=/dev/vda rw memhp_default_state=online memory_hotplug.online_policy=auto-movable memory_hotplug.auto_movable_ratio=401 hostname=vm-vm-manohar-dev-x9xww console=hvc0"
-

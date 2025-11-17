@@ -263,6 +263,7 @@ func run(logger *zap.Logger) error {
 			sysctl,
 			vmSpec.Guest.Env,
 			disks,
+			vmSpec.BlockDevices,
 			enableSSH,
 			swapSize,
 			shmSize,
