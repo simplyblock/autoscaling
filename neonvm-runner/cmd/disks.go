@@ -54,11 +54,10 @@ func setupVMDisks(
 	qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=runtime,file=%s,if=virtio,media=cdrom,readonly=on,cache=none", runtimeDiskPath))
 
 	if enableSSH {
-		name := "ssh-authorized-keys"
-		if err := createISO9660FromPath(logger, name, sshAuthorizedKeysDiskPath, sshAuthorizedKeysMountPoint); err != nil {
+		if err := createISOFromFile(logger, sshAuthorizedKeysDiskPath, sshAuthorizedKeysMountPoint, "authorized_keys"); err != nil {
 			return nil, fmt.Errorf("failed to create ISO9660 image: %w", err)
 		}
-		qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=%s,file=%s,if=virtio,media=cdrom,cache=none", name, sshAuthorizedKeysDiskPath))
+		qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=ssh-authorized-keys,file=%s,if=virtio,media=cdrom,cache=none", sshAuthorizedKeysDiskPath))
 	}
 
 	if swapSize != nil {
@@ -586,4 +585,41 @@ func createISO9660FromPath(logger *zap.Logger, diskName string, diskPath string,
 	}
 
 	return nil
+}
+
+func createISOFromFile(logger *zap.Logger, diskPath string, filePath string, outputName string) error {
+	writer, err := iso9660.NewWriter()
+	if err != nil {
+		return err
+	}
+	defer writer.Cleanup() //nolint:errcheck
+
+	logger.Info("adding file to ISO9660 disk", zap.String("path", outputName))
+	if err := writer.AddFile(bytes.NewReader([]byte{}), ".keep"); err != nil {
+		return err
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if err := writer.AddFile(file, outputName); err != nil {
+		return err
+	}
+
+	outputFile, err := os.OpenFile(diskPath, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, 0o644)
+	if err != nil {
+		return err
+	}
+
+	if err := outputFile.Chown(36, 34); err != nil {
+		return err
+	}
+
+	if err := writer.WriteTo(outputFile, "ssh-authorized-keys"); err != nil {
+		return err
+	}
+
+	return outputFile.Close()
 }
