@@ -100,10 +100,13 @@ func setupVMDisks(
 			continue
 		}
 		logger.Info("attaching block device", zap.String("blockDevice", block.Name), zap.String("devicePath", devicePath))
+		driveID := fmt.Sprintf("blk-%s", block.Name)
 		qemuCmd = append(
 			qemuCmd,
 			"-drive",
-			fmt.Sprintf("id=%s,file=%s,if=virtio,format=raw,media=disk,cache=none,serial=%s", block.Name, devicePath, block.Name),
+			fmt.Sprintf("file=%s,if=none,id=%s,format=raw,media=disk,cache=none", devicePath, driveID),
+			"-device",
+			fmt.Sprintf("virtio-blk-pci,drive=%s,serial=%s", driveID, block.Name),
 		)
 	}
 
