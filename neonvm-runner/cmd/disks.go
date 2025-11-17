@@ -48,7 +48,7 @@ func setupVMDisks(
 	var qemuCmd []string
 
 	qemuCmd = append(qemuCmd,
-		"-drive", fmt.Sprintf("file=%s,if=none,id=rootdisk,format=qcow2,media=disk,%s", rootDiskPath, diskCacheSettings),
+		"-drive", fmt.Sprintf("file=%s,if=none,id=rootdisk,media=disk,%s", rootDiskPath, diskCacheSettings),
 		"-device", "virtio-blk-pci,drive=rootdisk,bootindex=1",
 	)
 	qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=runtime,file=%s,if=virtio,media=cdrom,readonly=on,cache=none", runtimeDiskPath))
