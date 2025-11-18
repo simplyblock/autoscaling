@@ -172,6 +172,11 @@ type VirtualMachineSpec struct {
 	// +kubebuilder:default:=false
 	// +optional
 	EnableNetworkMonitoring *bool `json:"enableNetworkMonitoring,omitempty"`
+
+	// PowerState controls whether the VM runner pod should be running or stopped.
+	// +kubebuilder:default:=Running
+	// +optional
+	PowerState PowerState `json:"powerState,omitempty"`
 }
 
 type TLSProvisioning struct {
@@ -263,6 +268,14 @@ const (
 	RestartPolicyAlways    RestartPolicy = "Always"
 	RestartPolicyOnFailure RestartPolicy = "OnFailure"
 	RestartPolicyNever     RestartPolicy = "Never"
+)
+
+// +kubebuilder:validation:Enum=Running;Stopped
+type PowerState string
+
+const (
+	PowerStateRunning PowerState = "Running"
+	PowerStateStopped PowerState = "Stopped"
 )
 
 type Guest struct {

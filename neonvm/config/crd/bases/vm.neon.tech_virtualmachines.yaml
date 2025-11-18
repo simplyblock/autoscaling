@@ -2987,6 +2987,14 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              powerState:
+                default: Running
+                description: PowerState controls whether the VM runner pod should
+                  be running or stopped.
+                enum:
+                - Running
+                - Stopped
+                type: string
               qmp:
                 default: 20183
                 format: int32

@@ -177,6 +177,11 @@ func (r *VMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Re
 			changed = true
 		}
 
+		if vm.Spec.PowerState == "" {
+			vm.Spec.PowerState = vmv1.PowerStateRunning
+			changed = true
+		}
+
 		if changed {
 			if err := r.tryUpdateVM(ctx, &vm); err != nil {
 				log.Error(err, "Failed to set default values for VirtualMachine")
@@ -341,6 +346,12 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		}
 	}
 
+	powerState := vm.Spec.PowerState
+	if powerState == "" {
+		powerState = vmv1.PowerStateRunning
+	}
+	wantRunning := powerState == vmv1.PowerStateRunning
+
 	switch vm.Status.Phase {
 
 	case "":
@@ -355,6 +366,36 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		// VirtualMachine just created, change Phase to "Pending"
 		vm.Status.Phase = vmv1.VmPending
 	case vmv1.VmPending:
+		if !wantRunning {
+			if vm.Status.PodName != "" {
+				vmRunner := &corev1.Pod{}
+				err := r.Get(ctx, types.NamespacedName{Name: vm.Status.PodName, Namespace: vm.Namespace}, vmRunner)
+				if err != nil && !apierrors.IsNotFound(err) {
+					log.Error(err, "Failed to get vm-runner Pod")
+					return err
+				}
+				if err == nil {
+					switch runnerStatus(vmRunner) {
+					case runnerRunning:
+						if err := r.requestRunnerShutdown(ctx, vm, vmRunner); err != nil {
+							return err
+						}
+					default:
+						if vmRunner.DeletionTimestamp == nil {
+							log.Info("Deleting runner Pod because powerState=Stopped", "Pod.Namespace", vmRunner.Namespace, "Pod.Name", vmRunner.Name)
+							if err := r.Delete(ctx, vmRunner); err != nil && !apierrors.IsNotFound(err) {
+								return err
+							}
+						}
+					}
+					setVMStoppedCondition(vm)
+					return nil
+				}
+			}
+			setVMStoppedCondition(vm)
+			return nil
+		}
+
 		// Generate runner pod name and set desired memory provider.
 		if len(vm.Status.PodName) == 0 {
 			vm.Status.PodName = names.SimpleNameGenerator.GenerateName(fmt.Sprintf("%s-", vm.Name))
@@ -506,9 +547,18 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 			log.Error(err, "Failed to sync pod labels and annotations", "VirtualMachine", vm.Name)
 		}
 
+		status := runnerStatus(vmRunner)
+
 		// runner pod found, check/update phase now
-		switch runnerStatus(vmRunner) {
+		switch status {
 		case runnerRunning:
+			if !wantRunning {
+				if err := r.requestRunnerShutdown(ctx, vm, vmRunner); err != nil {
+					return err
+				}
+				setVMStoppedCondition(vm)
+				return nil
+			}
 			// update status by IP of runner pod
 			vm.Status.PodIP = vmRunner.Status.PodIP
 			// update phase
@@ -579,6 +629,18 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 					"Memory in spec", memorySizeFromSpec)
 				vm.Status.Phase = vmv1.VmScaling
 			}
+		case runnerPending:
+			if !wantRunning {
+				if vmRunner.DeletionTimestamp == nil {
+					log.Info("Deleting runner Pod because powerState=Stopped", "Pod.Namespace", vmRunner.Namespace, "Pod.Name", vmRunner.Name)
+					if err := r.Delete(ctx, vmRunner); err != nil && !apierrors.IsNotFound(err) {
+						return err
+					}
+				}
+				setVMStoppedCondition(vm)
+				return nil
+			}
+			// do nothing otherwise
 		case runnerSucceeded:
 			vm.Status.Phase = vmv1.VmSucceeded
 			meta.SetStatusCondition(&vm.Status.Conditions,
@@ -625,6 +687,14 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		// will be correctly set even if the rest of the reconcile operation fails.
 		if err := updatePodMetadataIfNecessary(ctx, r.Client, vm, vmRunner); err != nil {
 			log.Error(err, "Failed to sync pod labels and annotations", "VirtualMachine", vm.Name)
+		}
+
+		if !wantRunning {
+			if err := r.requestRunnerShutdown(ctx, vm, vmRunner); err != nil {
+				return err
+			}
+			setVMStoppedCondition(vm)
+			return nil
 		}
 
 		// runner pod found, check that it's still up:
@@ -717,18 +787,24 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		//
 		// However, this opens up a possibility for cascading failures where the pods would be constantly
 		// recreated, and then stuck deleting. That's why we have AtMostOnePod.
+		if !wantRunning {
+			setVMStoppedCondition(vm)
+		}
+
 		if !r.Config.AtMostOnePod || apierrors.IsNotFound(err) {
 			// NB: Cleanup() leaves status .Phase and .RestartCount (+ some others) but unsets other fields.
 			vm.Cleanup()
 
 			var shouldRestart bool
-			switch vm.Spec.RestartPolicy {
-			case vmv1.RestartPolicyAlways:
-				shouldRestart = true
-			case vmv1.RestartPolicyOnFailure:
-				shouldRestart = vm.Status.Phase == vmv1.VmFailed
-			case vmv1.RestartPolicyNever:
-				shouldRestart = false
+			if wantRunning {
+				switch vm.Spec.RestartPolicy {
+				case vmv1.RestartPolicyAlways:
+					shouldRestart = true
+				case vmv1.RestartPolicyOnFailure:
+					shouldRestart = vm.Status.Phase == vmv1.VmFailed
+				case vmv1.RestartPolicyNever:
+					shouldRestart = false
+				}
 			}
 
 			if shouldRestart {
@@ -736,6 +812,8 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 				vm.Status.Phase = vmv1.VmPending // reset to trigger restart
 				vm.Status.RestartCount += 1      // increment restart count
 				r.Metrics.vmRestartCounts.Inc()
+			} else if !wantRunning {
+				setVMStoppedCondition(vm)
 			}
 
 			// TODO for RestartPolicyNever: implement TTL or do nothing
@@ -763,6 +841,16 @@ func propagateRevision(vm *vmv1.VirtualMachine) {
 	}
 	rev := vm.Spec.TargetRevision.WithTime(time.Now())
 	vm.Status.CurrentRevision = &rev
+}
+
+func setVMStoppedCondition(vm *vmv1.VirtualMachine) {
+	meta.SetStatusCondition(&vm.Status.Conditions,
+		metav1.Condition{
+			Type:    typeAvailableVirtualMachine,
+			Status:  metav1.ConditionFalse,
+			Reason:  "PowerStateStopped",
+			Message: "VirtualMachine stopped as requested by spec.powerState",
+		})
 }
 
 func (r *VMReconciler) doVirtioMemScaling(
@@ -800,6 +888,33 @@ func (r *VMReconciler) doVirtioMemScaling(
 	done = currentTotalSize.Value() == goalTotalSize.Value()
 	r.updateVMStatusMemory(ctx, vm, currentTotalSize)
 	return done, nil
+}
+
+func (r *VMReconciler) requestRunnerShutdown(
+	ctx context.Context,
+	vm *vmv1.VirtualMachine,
+	vmRunner *corev1.Pod,
+) error {
+	logger := log.FromContext(ctx)
+
+	if vm.Status.PodIP == "" {
+		logger.Info("VM runner has no pod IP yet, deleting pod to stop it", "VirtualMachine", vm.Name, "Pod", vmRunner.Name)
+		return client.IgnoreNotFound(r.Delete(ctx, vmRunner))
+	}
+
+	ip, port := QmpAddr(vm)
+	if ip == "" {
+		logger.Info("VM runner IP is empty, deleting pod to stop it", "VirtualMachine", vm.Name, "Pod", vmRunner.Name)
+		return client.IgnoreNotFound(r.Delete(ctx, vmRunner))
+	}
+
+	logger.Info("Requesting VM shutdown via QMP", "VirtualMachine", vm.Name, "Pod", vmRunner.Name)
+	if err := QmpSystemPowerdown(vm); err != nil {
+		logger.Error(err, "Failed to request VM shutdown via QMP, deleting pod instead", "VirtualMachine", vm.Name, "Pod", vmRunner.Name)
+		return client.IgnoreNotFound(r.Delete(ctx, vmRunner))
+	}
+
+	return nil
 }
 
 type runnerStatusKind string

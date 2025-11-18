@@ -508,3 +508,24 @@ func QmpQuit(ip string, port int32) error {
 
 	return nil
 }
+
+func QmpSystemPowerdown(vm *vmv1.VirtualMachine) error {
+	ip, port := QmpAddr(vm)
+	if ip == "" {
+		return fmt.Errorf("cannot power down VM without pod IP")
+	}
+
+	mon, err := QmpConnect(ip, port)
+	if err != nil {
+		return err
+	}
+	defer mon.Disconnect() //nolint:errcheck // nothing to do with error when deferred. TODO: log it?
+
+	qmpcmd := []byte(`{"execute": "system_powerdown"}`)
+	_, err = mon.Run(qmpcmd)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
