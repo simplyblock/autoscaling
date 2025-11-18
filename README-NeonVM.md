@@ -66,6 +66,8 @@ spec:
 ```
 
 Because the filesystem lives on the PVC, the contents survive VM restarts without any guest-side bootstrapping.
+
+PVC expansions are detected automatically. Once the underlying claim grows, NeonVM resizes the attached virtio disk and runs `resize2fs` inside the guest so the filesystem fills the new space without manual intervention.
 ```
 
 ### Check virtual machine running

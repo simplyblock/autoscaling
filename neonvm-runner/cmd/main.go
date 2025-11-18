@@ -49,7 +49,10 @@ const (
 	qmpUnixSocketForSigtermHandler = "/vm/qmp-sigterm.sock"
 	logSerialSocket                = "/vm/log.sock"
 	bufferedReaderSize             = 4096
+	blockDeviceResizePollInterval  = 30 * time.Second
 )
+
+var qmpBlockResizeMutex sync.Mutex
 
 func checkKVM() bool {
 	info, err := os.Stat("/dev/kvm")
@@ -274,10 +277,11 @@ func run(logger *zap.Logger) error {
 		return resizeRootDisk(logger, vmSpec)
 	})
 	var qemuCmd []string
+	var blockDeviceInfos []blockDeviceRuntimeInfo
 
 	tg.Go("qemu-cmd", func(logger *zap.Logger) error {
 		var err error
-		qemuCmd, err = buildQEMUCmd(cfg, logger, vmSpec, &vmStatus, enableSSH, swapSize, hostname)
+		qemuCmd, blockDeviceInfos, err = buildQEMUCmd(cfg, logger, vmSpec, &vmStatus, enableSSH, swapSize, hostname)
 		return err
 	})
 
@@ -285,7 +289,7 @@ func run(logger *zap.Logger) error {
 		return err
 	}
 
-	err = runQEMU(cfg, logger, vmSpec, qemuCmd)
+	err = runQEMU(cfg, logger, vmSpec, qemuCmd, blockDeviceInfos)
 	if err != nil {
 		return fmt.Errorf("failed to run QEMU: %w", err)
 	}
@@ -301,7 +305,7 @@ func buildQEMUCmd(
 	enableSSH bool,
 	swapSize *resource.Quantity,
 	hostname string,
-) ([]string, error) {
+) ([]string, []blockDeviceRuntimeInfo, error) {
 	// prepare qemu command line
 	qemuCmd := []string{
 		"-runas", "qemu",
@@ -321,9 +325,9 @@ func buildQEMUCmd(
 		"-device", "virtserialport,chardev=log,name=tech.neon.log.0",
 	}
 
-	qemuDiskArgs, err := setupVMDisks(logger, cfg.diskCacheSettings, enableSSH, swapSize, vmSpec.Disks)
+	qemuDiskArgs, blockInfos, err := setupVMDisks(logger, cfg.diskCacheSettings, enableSSH, swapSize, vmSpec.Disks)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	qemuCmd = append(qemuCmd, qemuDiskArgs...)
 
@@ -410,7 +414,7 @@ func buildQEMUCmd(
 
 	qemuNetArgs, err := setupVMNetworks(logger, vmSpec.Guest.Ports, vmSpec.ExtraNetwork)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	qemuCmd = append(qemuCmd, qemuNetArgs...)
 
@@ -426,7 +430,7 @@ func buildQEMUCmd(
 		qemuCmd = append(qemuCmd, "-incoming", fmt.Sprintf("tcp:0:%d", vmv1.MigrationPort))
 	}
 
-	return qemuCmd, nil
+	return qemuCmd, blockInfos, nil
 }
 
 const (
@@ -482,6 +486,7 @@ func runQEMU(
 	logger *zap.Logger,
 	vmSpec *vmv1.VirtualMachineSpec,
 	qemuCmd []string,
+	blockDevices []blockDeviceRuntimeInfo,
 ) error {
 	selfPodName, ok := os.LookupEnv("K8S_POD_NAME")
 	if !ok {
@@ -578,6 +583,10 @@ func runQEMU(
 	go forwardLogs(ctx, logger, &wg)
 	wg.Add(1)
 	go monitorFiles(ctx, logger, &wg, vmSpec)
+	if len(blockDevices) != 0 {
+		wg.Add(1)
+		go watchBlockDeviceResizes(ctx, logger, blockDevices, &wg)
+	}
 
 	qemuBin := getQemuBinaryName(cfg.architecture)
 	var bin string
@@ -826,6 +835,52 @@ func monitorFiles(ctx context.Context, logger *zap.Logger, wg *sync.WaitGroup, v
 	}
 }
 
+func watchBlockDeviceResizes(ctx context.Context, logger *zap.Logger, devices []blockDeviceRuntimeInfo, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	if len(devices) == 0 {
+		return
+	}
+
+	logger = logger.Named("block-device-resize")
+	ticker := time.NewTicker(blockDeviceResizePollInterval)
+	defer ticker.Stop()
+
+	for i := range devices {
+		monitorBlockDeviceResize(ctx, logger, &devices[i])
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for i := range devices {
+				monitorBlockDeviceResize(ctx, logger, &devices[i])
+			}
+		}
+	}
+}
+
+func monitorBlockDeviceResize(ctx context.Context, logger *zap.Logger, device *blockDeviceRuntimeInfo) {
+	size, err := blockDeviceSize(device.DevicePath)
+	if err != nil {
+		logger.Warn("failed to read block device size", zap.String("disk", device.Name), zap.String("devicePath", device.DevicePath), zap.Error(err))
+		return
+	}
+	if size <= device.Size {
+		return
+	}
+
+	logger.Info("detected PVC-backed block device expansion", zap.String("disk", device.Name), zap.Int64("previousSize", device.Size), zap.Int64("newSize", size))
+	if err := resizeGuestDisk(ctx, logger, device.Name, size); err != nil {
+		logger.Error("failed to resize guest disk", zap.String("disk", device.Name), zap.Error(err))
+		return
+	}
+
+	device.Size = size
+}
+
 func terminateQemuOnSigterm(ctx context.Context, logger *zap.Logger, wg *sync.WaitGroup) {
 	logger = logger.Named("terminate-qemu-on-sigterm")
 
@@ -1064,4 +1119,64 @@ func getFileChecksumFromNeonvmDaemon(ctx context.Context, guestpath string) (str
 	}
 
 	return string(checksum), nil
+}
+
+func resizeGuestDisk(ctx context.Context, logger *zap.Logger, diskName string, newSize int64) error {
+	if err := qmpResizeBlockDevice(diskName, newSize); err != nil {
+		return fmt.Errorf("failed to resize block device %s via QMP: %w", diskName, err)
+	}
+
+	resizeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	if err := requestGuestDiskResize(resizeCtx, diskName); err != nil {
+		return fmt.Errorf("failed to resize filesystem for %s inside guest: %w", diskName, err)
+	}
+
+	logger.Info("resized guest filesystem", zap.String("disk", diskName), zap.Int64("size", newSize))
+	return nil
+}
+
+func qmpResizeBlockDevice(device string, size int64) error {
+	qmpBlockResizeMutex.Lock()
+	defer qmpBlockResizeMutex.Unlock()
+
+	mon, err := qmp.NewSocketMonitor("unix", qmpUnixSocketForSigtermHandler, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	defer mon.Disconnect() //nolint:errcheck
+
+	if err := mon.Connect(); err != nil {
+		return err
+	}
+
+	cmd := fmt.Sprintf(`{"execute":"block_resize","arguments":{"device":"%s","size":%d}}`, device, size)
+	_, err = mon.Run([]byte(cmd))
+	return err
+}
+
+func requestGuestDiskResize(ctx context.Context, diskName string) error {
+	_, vmIP, _, err := calcIPs(defaultNetworkCIDR)
+	if err != nil {
+		return fmt.Errorf("could not calculate VM IP address: %w", err)
+	}
+
+	url := fmt.Sprintf("http://%s:25183/disks/%s/resize", vmIP, diskName)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, http.NoBody)
+	if err != nil {
+		return fmt.Errorf("could not build request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("could not send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("neonvm-daemon responded with status %d", resp.StatusCode)
+	}
+
+	return nil
 }
