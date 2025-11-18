@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -127,7 +128,6 @@ func (r *VirtualMachine) ValidateUpdate(old runtime.Object) (admission.Warnings,
 		{".spec.guest.args", func(v *VirtualMachine) any { return v.Spec.Guest.Args }},
 		{".spec.guest.env", func(v *VirtualMachine) any { return v.Spec.Guest.Env }},
 		{".spec.guest.settings", func(v *VirtualMachine) any { return v.Spec.Guest.Settings }},
-		{".spec.disks", func(v *VirtualMachine) any { return v.Spec.Disks }},
 		{".spec.podResources", func(v *VirtualMachine) any { return v.Spec.PodResources }},
 		{".spec.enableAcceleration", func(v *VirtualMachine) any { return v.Spec.EnableAcceleration }},
 		{".spec.enableSSH", func(v *VirtualMachine) any { return v.Spec.EnableSSH }},
@@ -140,6 +140,10 @@ func (r *VirtualMachine) ValidateUpdate(old runtime.Object) (admission.Warnings,
 		if !reflect.DeepEqual(info.getter(r), info.getter(before)) {
 			return nil, fmt.Errorf("%s is immutable", info.fieldName)
 		}
+	}
+
+	if err := validateDiskUpdates(before.Spec.Disks, r.Spec.Disks); err != nil {
+		return nil, err
 	}
 
 	fieldsAllowedToChangeFromNilOnly := []struct {
@@ -191,4 +195,49 @@ func (r *VirtualMachine) ValidateUpdate(old runtime.Object) (admission.Warnings,
 func (r *VirtualMachine) ValidateDelete() (admission.Warnings, error) {
 	// No deletion validation required currently.
 	return nil, nil
+}
+
+func validateDiskUpdates(before, after []Disk) error {
+	if len(before) != len(after) {
+		return fmt.Errorf(".spec.disks is immutable (only blockDevice persistentVolumeClaim storage requests may change)")
+	}
+
+	for i := range before {
+		if before[i].Name != after[i].Name {
+			return fmt.Errorf(".spec.disks[%d].name is immutable", i)
+		}
+
+		if err := validateDiskUpdate(before[i], after[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateDiskUpdate(before, after Disk) error {
+	b := normalizeDiskForComparison(before)
+	a := normalizeDiskForComparison(after)
+
+	if !reflect.DeepEqual(b, a) {
+		return fmt.Errorf(".spec.disks[%s] is immutable except for blockDevice persistentVolumeClaim storage requests", before.Name)
+	}
+
+	return nil
+}
+
+func normalizeDiskForComparison(d Disk) Disk {
+	copy := d
+	if dc := d.DeepCopy(); dc != nil {
+		copy = *dc
+	}
+
+	if copy.BlockDevice != nil && copy.BlockDevice.PersistentVolumeClaim != nil {
+		requests := copy.BlockDevice.PersistentVolumeClaim.Resources.Requests
+		if len(requests) != 0 {
+			delete(requests, corev1.ResourceStorage)
+		}
+	}
+
+	return copy
 }
