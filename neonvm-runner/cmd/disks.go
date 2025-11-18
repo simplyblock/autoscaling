@@ -412,7 +412,23 @@ func blockDeviceFilesystemType(devicePath string) (string, error) {
 		}
 		return "", err
 	}
-	return strings.TrimSpace(string(output)), nil
+	out := strings.TrimSpace(string(output))
+	if out == "" {
+		return "", nil
+	}
+
+	// cope with BusyBox-style blkid output. If blkid ignores -o value and prints
+	// the full descriptive line (/dev/... TYPE="ext4"), we now extract the filesystem
+	// type from the TYPE="…" token before falling back to the raw string.
+	// This keeps migrations from failing when blkid formats output unexpectedly.
+	if idx := strings.Index(out, `TYPE="`); idx != -1 {
+		rest := out[idx+len(`TYPE="`):]
+		if end := strings.Index(rest, `"`); end != -1 {
+			return rest[:end], nil
+		}
+	}
+
+	return out, nil
 }
 
 func blockDeviceSize(devicePath string) (int64, error) {
