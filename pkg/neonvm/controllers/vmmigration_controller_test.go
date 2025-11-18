@@ -263,18 +263,21 @@ func Test_VMM_to_Pending_then_removed(t *testing.T) {
 func Test_VMM_FailsWhenBlockDeviceNotRWX(t *testing.T) {
 	params := newMigrationTestParams(t)
 	vm := defaultVm()
-	vm.Spec.BlockDevices = []vmv1.BlockDevice{
-		{
-			Name: "extra",
-			PersistentVolumeClaim: &vmv1.BlockPersistentVolumeClaim{
-				Resources: corev1.VolumeResourceRequirements{
-					Requests: corev1.ResourceList{
-						corev1.ResourceStorage: resource.MustParse("1Gi"),
+	vm.Spec.Disks = append(vm.Spec.Disks, vmv1.Disk{
+		Name:      "extra",
+		MountPath: "/data",
+		DiskSource: vmv1.DiskSource{
+			BlockDevice: &vmv1.BlockDeviceSource{
+				PersistentVolumeClaim: &vmv1.BlockPersistentVolumeClaim{
+					Resources: corev1.VolumeResourceRequirements{
+						Requests: corev1.ResourceList{
+							corev1.ResourceStorage: resource.MustParse("1Gi"),
+						},
 					},
 				},
 			},
 		},
-	}
+	})
 	vm.Status.Phase = vmv1.VmRunning
 	vm.Status.PodIP = "1.2.3.4"
 	params.createVM(vm)
@@ -282,7 +285,7 @@ func Test_VMM_FailsWhenBlockDeviceNotRWX(t *testing.T) {
 	pvcVolumeMode := corev1.PersistentVolumeBlock
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      blockDevicePVCName(vm, vm.Spec.BlockDevices[0]),
+			Name:      blockDevicePVCName(vm, vm.Spec.Disks[len(vm.Spec.Disks)-1]),
 			Namespace: vm.Namespace,
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{

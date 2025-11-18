@@ -38,7 +38,6 @@ func setupVMDisks(
 	enableSSH bool,
 	swapSize *resource.Quantity,
 	extraDisks []vmv1.Disk,
-	blockDevices []vmv1.BlockDevice,
 ) ([]string, error) {
 	var qemuCmd []string
 
@@ -64,6 +63,25 @@ func setupVMDisks(
 
 	for _, disk := range extraDisks {
 		switch {
+		case disk.BlockDevice != nil:
+			devicePath := disk.BlockDevice.RunnerDevicePath(disk.Name)
+			if _, err := os.Stat(devicePath); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					logger.Warn("block device path not found", zap.String("disk", disk.Name), zap.String("devicePath", devicePath))
+				} else {
+					logger.Warn("failed to stat block device", zap.String("disk", disk.Name), zap.String("devicePath", devicePath), zap.Error(err))
+				}
+				continue
+			}
+			if err := ensureBlockDeviceReady(logger, disk.Name, devicePath); err != nil {
+				return nil, fmt.Errorf("failed to prepare block device %s at %s: %w", disk.Name, devicePath, err)
+			}
+			logger.Info("attaching PVC-backed block device", zap.String("disk", disk.Name), zap.String("devicePath", devicePath))
+			qemuCmd = append(
+				qemuCmd,
+				"-drive",
+				fmt.Sprintf("id=%s,file=%s,if=virtio,format=raw,media=disk,cache=none", disk.Name, devicePath),
+			)
 		case disk.EmptyDisk != nil:
 			logger.Info("creating QCOW2 image with empty ext4 filesystem", zap.String("diskName", disk.Name))
 			dPath := fmt.Sprintf("%s/%s.qcow2", mountedDiskPath, disk.Name)
@@ -86,24 +104,6 @@ func setupVMDisks(
 		default:
 			// do nothing
 		}
-	}
-
-	for _, block := range blockDevices {
-		devicePath := block.RunnerDevicePath()
-		if _, err := os.Stat(devicePath); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				logger.Warn("block device path not found", zap.String("blockDevice", block.Name), zap.String("devicePath", devicePath))
-			} else {
-				logger.Warn("failed to stat block device", zap.String("blockDevice", block.Name), zap.String("devicePath", devicePath), zap.Error(err))
-			}
-			continue
-		}
-		logger.Info("attaching block device", zap.String("blockDevice", block.Name), zap.String("devicePath", devicePath))
-		qemuCmd = append(
-			qemuCmd,
-			"-drive",
-			fmt.Sprintf("id=%s,file=%s,if=virtio,format=raw,media=disk,cache=none", block.Name, devicePath),
-		)
 	}
 
 	return qemuCmd, nil
@@ -146,7 +146,6 @@ func createISO9660runtime(
 	sysctl []string,
 	env []vmv1.EnvVar,
 	disks []vmv1.Disk,
-	blockDevices []vmv1.BlockDevice,
 	enableSSH bool,
 	swapSize *resource.Quantity,
 	shmsize *resource.Quantity,
@@ -212,6 +211,9 @@ func createISO9660runtime(
 				continue
 			}
 			switch {
+			case disk.BlockDevice != nil:
+				mounts = append(mounts, fmt.Sprintf(`/neonvm/bin/mount $(/neonvm/bin/blkid -L %s) %s`, disk.Name, disk.MountPath))
+				mounts = append(mounts, fmt.Sprintf(`/neonvm/bin/chmod 0777 %s`, disk.MountPath))
 			case disk.EmptyDisk != nil:
 				opts := ""
 				if disk.EmptyDisk.Discard {
@@ -358,6 +360,42 @@ func createSwap(diskPath string, swapSize *resource.Quantity) error {
 	}
 
 	return nil
+}
+
+func ensureBlockDeviceReady(logger *zap.Logger, diskName, devicePath string) error {
+	fsType, err := blockDeviceFilesystemType(devicePath)
+	if err != nil {
+		return err
+	}
+
+	switch fsType {
+	case "":
+		logger.Info("formatting PVC-backed block device as ext4", zap.String("disk", diskName))
+		if err := execFg("mkfs.ext4", "-F", "-L", diskName, devicePath); err != nil {
+			return err
+		}
+	case "ext4":
+		if err := execFg("tune2fs", "-L", diskName, devicePath); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported filesystem %q found on disk %s (expected ext4 or empty)", fsType, diskName)
+	}
+
+	return nil
+}
+
+func blockDeviceFilesystemType(devicePath string) (string, error) {
+	cmd := exec.Command("blkid", "-o", "value", "-s", "TYPE", devicePath)
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 func createQCOW2(diskName string, diskPath string, diskSize *resource.Quantity, contentPath *string) error {

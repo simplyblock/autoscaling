@@ -760,14 +760,13 @@ func (r *VirtualMachineMigrationReconciler) ensureBlockDevicesMigrationReady(
 	ctx context.Context,
 	vm *vmv1.VirtualMachine,
 ) error {
-	if len(vm.Spec.BlockDevices) == 0 {
-		return nil
-	}
-
-	for _, device := range vm.Spec.BlockDevices {
-		claimName := device.ExistingClaimName
+	for _, disk := range vm.Spec.Disks {
+		if disk.BlockDevice == nil {
+			continue
+		}
+		claimName := disk.BlockDevice.ExistingClaimName
 		if claimName == "" {
-			claimName = blockDevicePVCName(vm, device)
+			claimName = blockDevicePVCName(vm, disk)
 		}
 
 		pvc := &corev1.PersistentVolumeClaim{}
@@ -777,13 +776,13 @@ func (r *VirtualMachineMigrationReconciler) ensureBlockDevicesMigrationReady(
 
 		if pvc.Spec.VolumeMode == nil || *pvc.Spec.VolumeMode != corev1.PersistentVolumeBlock {
 			return &blockDeviceMigrationError{
-				message: fmt.Sprintf("block device %q uses PVC %q without volumeMode=Block, cannot live migrate", device.Name, claimName),
+				message: fmt.Sprintf("block device %q uses PVC %q without volumeMode=Block, cannot live migrate", disk.Name, claimName),
 			}
 		}
 
 		if !hasAccessMode(pvc.Spec.AccessModes, corev1.ReadWriteMany) {
 			return &blockDeviceMigrationError{
-				message: fmt.Sprintf("block device %q uses PVC %q without ReadWriteMany access mode, cannot live migrate", device.Name, claimName),
+				message: fmt.Sprintf("block device %q uses PVC %q without ReadWriteMany access mode, cannot live migrate", disk.Name, claimName),
 			}
 		}
 	}

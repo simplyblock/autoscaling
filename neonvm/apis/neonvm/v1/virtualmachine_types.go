@@ -104,10 +104,6 @@ type VirtualMachineSpec struct {
 	ServiceAccountName string                      `json:"serviceAccountName,omitempty"`
 	PodResources       corev1.ResourceRequirements `json:"podResources,omitempty"`
 
-	// BlockDevices exposes raw block PersistentVolumeClaims to the VM as QEMU disks.
-	// +optional
-	BlockDevices []BlockDevice `json:"blockDevices,omitempty"`
-
 	// +kubebuilder:default:=Always
 	// +optional
 	RestartPolicy RestartPolicy `json:"restartPolicy"`
@@ -550,6 +546,8 @@ type Disk struct {
 type DiskSource struct {
 	// EmptyDisk represents a temporary empty qcow2 disk that shares a vm's lifetime.
 	EmptyDisk *EmptyDiskSource `json:"emptyDisk,omitempty"`
+	// BlockDevice represents a PersistentVolumeClaim-backed block device.
+	BlockDevice *BlockDeviceSource `json:"blockDevice,omitempty"`
 	// configMap represents a configMap that should populate this disk
 	// +optional
 	ConfigMap *corev1.ConfigMapVolumeSource `json:"configMap,omitempty"`
@@ -577,10 +575,8 @@ type TmpfsDiskSource struct {
 
 const blockDeviceDefaultPathPrefix = "/dev/neonvm-block-"
 
-// BlockDevice describes a PersistentVolumeClaim-backed block device attached to the VM.
-type BlockDevice struct {
-	// Name for this block device, must be a DNS_LABEL.
-	Name string `json:"name"`
+// BlockDeviceSource describes a PersistentVolumeClaim-backed block device attached to the VM.
+type BlockDeviceSource struct {
 	// Override the path inside the runner Pod where the block device is exposed.
 	// +optional
 	DevicePath string `json:"devicePath,omitempty"`
@@ -606,11 +602,11 @@ type BlockPersistentVolumeClaim struct {
 }
 
 // RunnerDevicePath returns the path inside the runner Pod for this block device.
-func (b BlockDevice) RunnerDevicePath() string {
+func (b BlockDeviceSource) RunnerDevicePath(diskName string) string {
 	if b.DevicePath != "" {
 		return b.DevicePath
 	}
-	return BlockDeviceDevicePath(b.Name)
+	return BlockDeviceDevicePath(diskName)
 }
 
 // BlockDeviceDevicePath returns the default runner Pod device path for the given name.

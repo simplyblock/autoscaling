@@ -263,7 +263,6 @@ func run(logger *zap.Logger) error {
 			sysctl,
 			vmSpec.Guest.Env,
 			disks,
-			vmSpec.BlockDevices,
 			enableSSH,
 			swapSize,
 			shmSize,
@@ -322,7 +321,7 @@ func buildQEMUCmd(
 		"-device", "virtserialport,chardev=log,name=tech.neon.log.0",
 	}
 
-	qemuDiskArgs, err := setupVMDisks(logger, cfg.diskCacheSettings, enableSSH, swapSize, vmSpec.Disks, vmSpec.BlockDevices)
+	qemuDiskArgs, err := setupVMDisks(logger, cfg.diskCacheSettings, enableSSH, swapSize, vmSpec.Disks)
 	if err != nil {
 		return nil, err
 	}

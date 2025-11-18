@@ -1030,18 +1030,23 @@ func extractVirtualMachineOvercommitSettingsJSON(spec vmv1.VirtualMachineSpec) *
 func (r *VMReconciler) ensureBlockDevicePVCs(ctx context.Context, vm *vmv1.VirtualMachine) error {
 	logger := log.FromContext(ctx)
 
-	for _, device := range vm.Spec.BlockDevices {
+	for _, disk := range vm.Spec.Disks {
+		if disk.BlockDevice == nil {
+			continue
+		}
+		device := disk.BlockDevice
 		if device.ExistingClaimName != "" {
 			if device.PersistentVolumeClaim != nil {
-				return fmt.Errorf("blockDevice %q cannot set both existingClaimName and persistentVolumeClaim", device.Name)
+				return fmt.Errorf("disk %q cannot set both blockDevice.existingClaimName and blockDevice.persistentVolumeClaim", disk.Name)
 			}
 			continue
 		}
 		if device.PersistentVolumeClaim == nil {
-			return fmt.Errorf("blockDevice %q requires persistentVolumeClaim when existingClaimName is empty", device.Name)
+			return fmt.Errorf("disk %q requires blockDevice.persistentVolumeClaim when blockDevice.existingClaimName is empty", disk.Name)
 		}
+
 		nn := types.NamespacedName{
-			Name:      blockDevicePVCName(vm, device),
+			Name:      blockDevicePVCName(vm, disk),
 			Namespace: vm.Namespace,
 		}
 
@@ -1074,7 +1079,7 @@ func (r *VMReconciler) ensureBlockDevicePVCs(ctx context.Context, vm *vmv1.Virtu
 			return err
 		}
 
-		logger.Info("Creating PVC for block device", "VirtualMachine", vm.Name, "BlockDevice", device.Name, "PVC", pvc.Name)
+		logger.Info("Creating PVC for block device", "VirtualMachine", vm.Name, "Disk", disk.Name, "PVC", pvc.Name)
 		if err := r.Create(ctx, pvc); err != nil {
 			return err
 		}
@@ -1092,12 +1097,12 @@ func getBlockAccessModes(modes []corev1.PersistentVolumeAccessMode) []corev1.Per
 	return out
 }
 
-func blockDevicePVCName(vm *vmv1.VirtualMachine, device vmv1.BlockDevice) string {
-	return fmt.Sprintf("%s-block-%s", vm.Name, device.Name)
+func blockDevicePVCName(vm *vmv1.VirtualMachine, disk vmv1.Disk) string {
+	return fmt.Sprintf("%s-block-%s", vm.Name, disk.Name)
 }
 
-func blockDeviceVolumeName(device vmv1.BlockDevice) string {
-	return fmt.Sprintf("block-%s", device.Name)
+func blockDeviceVolumeName(disk vmv1.Disk) string {
+	return fmt.Sprintf("block-%s", disk.Name)
 }
 
 func (r *VMReconciler) podForVirtualMachine(
@@ -1518,29 +1523,6 @@ func podSpec(
 		},
 	}
 
-	for _, device := range vm.Spec.BlockDevices {
-		claimName := device.ExistingClaimName
-		if claimName == "" {
-			claimName = blockDevicePVCName(vm, device)
-		}
-		volumeName := blockDeviceVolumeName(device)
-		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
-			Name: volumeName,
-			VolumeSource: corev1.VolumeSource{
-				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: claimName,
-				},
-			},
-		})
-		pod.Spec.Containers[0].VolumeDevices = append(
-			pod.Spec.Containers[0].VolumeDevices,
-			corev1.VolumeDevice{
-				Name:       volumeName,
-				DevicePath: device.RunnerDevicePath(),
-			},
-		)
-	}
-
 	if sshSecret != nil {
 		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts,
 			corev1.VolumeMount{
@@ -1670,6 +1652,27 @@ func podSpec(
 		}
 
 		switch {
+		case disk.BlockDevice != nil:
+			claimName := disk.BlockDevice.ExistingClaimName
+			if claimName == "" {
+				claimName = blockDevicePVCName(vm, disk)
+			}
+			volumeName := blockDeviceVolumeName(disk)
+			pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+				Name: volumeName,
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: claimName,
+					},
+				},
+			})
+			pod.Spec.Containers[0].VolumeDevices = append(
+				pod.Spec.Containers[0].VolumeDevices,
+				corev1.VolumeDevice{
+					Name:       volumeName,
+					DevicePath: disk.BlockDevice.RunnerDevicePath(disk.Name),
+				},
+			)
 		case disk.ConfigMap != nil:
 			pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, mnt)
 			pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{

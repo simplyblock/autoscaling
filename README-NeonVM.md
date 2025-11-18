@@ -47,9 +47,25 @@ spec:
   vmName: vm-test-dev
 EOF
 
-### Attaching raw block devices
+### Attaching PVC-backed block disks
 
-You can expose additional PVC-backed block devices via `spec.blockDevices`. These disks are presented to the guest as raw virtio devices (for example `/dev/vdb`). The guest image is responsible for creating a filesystem, mounting it, and ensuring it is ready before your application starts. See `vm-examples/pg16-disk-test` for an example `image-spec.yaml` that formats `/dev/vdb` as ext4 and mounts it at `/data` before PostgreSQL launches.
+Add a disk entry with `blockDevice` under `spec.disks` to provision a PersistentVolumeClaim-backed disk. NeonVM attaches the PVC to the runner Pod, ensures it has an ext4 filesystem (creating one if the device is empty), labels it with the disk name, and mounts it inside the guest at the requested `mountPath`. For example:
+
+```yaml
+spec:
+  disks:
+    - name: data
+      mountPath: /var/lib/postgresql
+      blockDevice:
+        persistentVolumeClaim:
+          storageClassName: neon-rwx
+          accessModes: [ReadWriteMany]
+          resources:
+            requests:
+              storage: 100Gi
+```
+
+Because the filesystem lives on the PVC, the contents survive VM restarts without any guest-side bootstrapping.
 ```
 
 ### Check virtual machine running
