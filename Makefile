@@ -309,10 +309,13 @@ docker-build-scheduler: docker-build-go-base ## Build docker image for (autoscal
 		.
 
 .PHONY: docker-build-vm-postgres
-docker-build-vm-postgres: bin/vm-builder ## Build docker images for testing VMs
+docker-build-vm-postgres: docker-build-daemon bin/vm-builder ## Build docker images for testing VMs
 	./bin/vm-builder \
 		-src postgres:15-bullseye \
 		-dst $(E2E_TESTS_VM_IMG) \
+		-daemon-image $(IMG_DAEMON) \
+		-build-arg ALPINE_IMG_TAG=$(ALPINE_IMG_TAG) \
+		-build-arg ALPINE_IMG_SHA=$(ALPINE_IMG_SHA) \
 		-build-arg RUST_IMG_TAG=$(RUST_IMG_TAG) \
 		-build-arg RUST_IMG_SHA=$(RUST_IMG_SHA) \
 		-target-arch linux/$(TARGET_ARCH) \

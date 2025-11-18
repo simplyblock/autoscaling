@@ -17,45 +17,6 @@ commands:
     user: nobody
     sysvInitAction: respawn
     shell: 'DATA_SOURCE_NAME="user=cloud_admin sslmode=disable dbname=postgres" /bin/postgres_exporter'
-  - name: prepare-data-volume
-    user: root
-    sysvInitAction: wait
-    shell: |
-      set -euo pipefail
-      DEVICE="/dev/disk/by-id/virtio-data"
-      if [ ! -b "$DEVICE" ]; then
-        DEVICE="/dev/vdb"
-      fi
-      if [ -b "$DEVICE" ]; then
-        echo "Configuring external data volume on $DEVICE"
-        mkdir -p /data
-        if ! blkid "$DEVICE" >/dev/null 2>&1; then
-          echo "Formatting $DEVICE as ext4"
-          mkfs.ext4 -F "$DEVICE"
-        fi
-        if ! mount | grep -q " /data "; then
-          mount "$DEVICE" /data
-        fi
-        chown postgres:postgres /data
-        if [ ! -f /data/PG_VERSION ]; then
-          echo "Initializing new Postgres data directory under /data"
-          su postgres -s /bin/sh -c 'initdb -D /data'
-        fi
-        if ! grep -q "/data" /etc/fstab; then
-          UUID=$(blkid -s UUID -o value "$DEVICE")
-          echo "UUID=${UUID} /data ext4 defaults 0 2" >> /etc/fstab
-        fi
-      else
-        echo "External data disk not found; using built-in storage"
-        mkdir -p /data
-        chown postgres:postgres /data
-        if [ ! -f /data/PG_VERSION ]; then
-          su postgres -s /bin/sh -c 'initdb -D /data'
-        fi
-        if ! grep -q "/data" /etc/fstab; then
-          echo "/data ext4 defaults 0 2" >> /etc/fstab
-        fi
-      fi
 
 files:
   - filename: cgconfig.conf
