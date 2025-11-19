@@ -902,7 +902,7 @@ func (r *VMReconciler) requestRunnerShutdown(
 		return client.IgnoreNotFound(r.Delete(ctx, vmRunner))
 	}
 
-	ip, port := QmpAddr(vm)
+	ip, _ := QmpAddr(vm)
 	if ip == "" {
 		logger.Info("VM runner IP is empty, deleting pod to stop it", "VirtualMachine", vm.Name, "Pod", vmRunner.Name)
 		return client.IgnoreNotFound(r.Delete(ctx, vmRunner))
