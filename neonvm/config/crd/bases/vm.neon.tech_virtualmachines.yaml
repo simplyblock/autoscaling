@@ -1012,10 +1012,6 @@ spec:
                       description: BlockDevice represents a PersistentVolumeClaim-backed
                         block device.
                       properties:
-                        devicePath:
-                          description: Override the path inside the runner Pod where
-                            the block device is exposed.
-                          type: string
                         existingClaimName:
                           description: Use an existing PersistentVolumeClaim instead
                             of creating one.

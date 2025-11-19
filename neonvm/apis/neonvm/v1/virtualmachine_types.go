@@ -590,9 +590,6 @@ const blockDeviceDefaultPathPrefix = "/dev/neonvm-block-"
 
 // BlockDeviceSource describes a PersistentVolumeClaim-backed block device attached to the VM.
 type BlockDeviceSource struct {
-	// Override the path inside the runner Pod where the block device is exposed.
-	// +optional
-	DevicePath string `json:"devicePath,omitempty"`
 	// Use an existing PersistentVolumeClaim instead of creating one.
 	// +optional
 	ExistingClaimName string `json:"existingClaimName,omitempty"`
@@ -617,7 +614,8 @@ type BlockPersistentVolumeClaim struct {
 // RunnerDevicePath returns the path inside the runner Pod for this block device.
 func (b BlockDeviceSource) RunnerDevicePath(diskName string) string {
 	if b.DevicePath != "" {
-		return b.DevicePath
+		// DevicePath is deprecated; ignore the provided value to keep the
+		// device path stable for migrations.
 	}
 	return BlockDeviceDevicePath(diskName)
 }
