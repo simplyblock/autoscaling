@@ -613,10 +613,6 @@ type BlockPersistentVolumeClaim struct {
 
 // RunnerDevicePath returns the path inside the runner Pod for this block device.
 func (b BlockDeviceSource) RunnerDevicePath(diskName string) string {
-	if b.DevicePath != "" {
-		// DevicePath is deprecated; ignore the provided value to keep the
-		// device path stable for migrations.
-	}
 	return BlockDeviceDevicePath(diskName)
 }
 
