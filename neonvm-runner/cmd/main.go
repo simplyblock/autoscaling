@@ -167,7 +167,11 @@ func main() {
 	logger := zap.Must(zap.NewProduction()).Named("neonvm-runner")
 
 	if err := run(logger); err != nil {
-		logger.Fatal("Failed to run", zap.Error(err))
+		logger.Error("Failed to run", zap.Error(err))
+		logger.Info("Holding runner pod for investigation; waiting for termination signal")
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		<-sigCh
 	}
 }
 
