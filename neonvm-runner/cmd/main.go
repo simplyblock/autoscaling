@@ -312,7 +312,6 @@ func buildQEMUCmd(
 ) ([]string, []blockDeviceRuntimeInfo, error) {
 	// prepare qemu command line
 	qemuCmd := []string{
-		"-runas", "qemu",
 		"-machine", getMachineType(cfg.architecture),
 		"-nographic",
 		"-no-reboot",
