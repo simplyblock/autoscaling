@@ -31,21 +31,26 @@ kind: VirtualMachine
 metadata:
   name: vm-manohar-dev
 spec:
+  powerState: Running
   guest:
     rootDisk:
-      image: docker.io/manoharbrm/pg16-test:dev
-    cpus: { min: 1, use: 1, max: 1 }
-    memorySlots: { min: 1, use: 1, max: 1 }
+      image: docker.io/manoharbrm/pg16-test:dev9
+    cpus: { min: 1, use: 1, max: 64 }
+    memorySlots: { min: 1, use: 2, max: 256 }
+    memorySlotSize: 512Mi
+  disks:
+    - name: data
+      mountPath: /var/lib/postgresql/data
+      blockDevice:
+        persistentVolumeClaim:
+          storageClassName: simplyblock-csi-sc
+          accessModes:
+            - ReadWriteMany
+          resources:
+            requests:
+              storage: 20Gi
 EOF
-
-cat <<EOF | kubectl apply -f -
-apiVersion: vm.neon.tech/v1
-kind: VirtualMachineMigration
-metadata:
-  name: example
-spec:
-  vmName: vm-test-dev
-EOF
+```
 
 ### Attaching PVC-backed block disks
 
@@ -58,7 +63,7 @@ spec:
       mountPath: /var/lib/postgresql
       blockDevice:
         persistentVolumeClaim:
-          storageClassName: neon-rwx
+          storageClassName: simplyblock-csi-sc
           accessModes: [ReadWriteMany]
           resources:
             requests:
@@ -313,29 +318,3 @@ which provides a reconcile function responsible for synchronizing resources unti
 - [x] Live migration CRDs
 - [x] Simplify VM disk image creation from any docker image
 - [ ] ARM64 support
-
-
-
-qemu-system-x86_64 -runas qemu -machine q35 -nographic -no-reboot -nodefaults -only-migratable -audiodev none,id=noaudio -serial pty -msg timestamp=on \
--qmp tcp:0.0.0.0:20183,server,wait=off -qmp tcp:0.0.0.0:20184,server,wait=off -qmp unix:/vm/qmp-sigterm.sock,server,wait=off \
--device virtio-serial \
--chardev socket,path=/vm/log.sock,server=on,wait=off,id=log \
--device virtserialport,chardev=log,name=tech.neon.log.0 \
--drive id=rootdisk,file=/vm/images/rootdisk.qcow2,if=virtio,media=disk,index=0,cache.writeback=on,cache.direct=on,cache.no-flush=on \
--drive id=runtime,file=/vm/images/runtime.iso,if=virtio,media=cdrom,readonly=on,cache=none \
--drive id=ssh-authorized-keys,file=/vm/images/ssh-authorized-keys.iso,if=virtio,media=cdrom,cache=none \
-
-# --- NVMe DISK ADDED HERE ---
--drive id=disknvme2,file=/vm/images/nvme2.qcow2,if=none,format=qcow2 \
--device nvme,serial=nvme02,id=nvme1 \
--device nvme-ns,drive=disknvme2,bus=nvme1,nsid=1 \
-# --- END NVMe ---
-
--chardev stdio,id=virtio-console \
--device virtconsole,chardev=virtio-console \
--enable-kvm -cpu max -smp cpus=1,maxcpus=1,sockets=1,cores=1,threads=1 \
--m size=1073741824b,slots=0,maxmem=1073741824b \
--netdev tap,id=default,ifname=tap-def,queues=4,script=no,downscript=no,vhost=on \
--device virtio-net-pci,mq=on,vectors=10,netdev=default,mac=d6:1f:0d:3f:fc:fd \
--kernel /vm/kernel/vmlinuz \
--append "panic=-1 init=/neonvm/bin/init loglevel=6 root=/dev/vda rw memhp_default_state=online memory_hotplug.online_policy=auto-movable memory_hotplug.auto_movable_ratio=401 hostname=vm-vm-manohar-dev-x9xww console=hvc0"
