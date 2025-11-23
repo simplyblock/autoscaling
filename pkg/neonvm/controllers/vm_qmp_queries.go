@@ -432,6 +432,15 @@ func QmpStartMigration(virtualmachine *vmv1.VirtualMachine, virtualmachinemigrat
 	}
 
 	// trigger migration
+	// check if block migration requested
+	blk := !virtualmachinemigration.Spec.Incremental
+	if virtualmachinemigration.Spec.BlockMigration != nil && !*virtualmachinemigration.Spec.BlockMigration {
+		blk = false
+	}
+	inc := virtualmachinemigration.Spec.Incremental
+	if !blk {
+		inc = false
+	}
 	qmpcmd = []byte(fmt.Sprintf(`{
 		"execute": "migrate",
 		"arguments":
@@ -440,7 +449,7 @@ func QmpStartMigration(virtualmachine *vmv1.VirtualMachine, virtualmachinemigrat
 			"inc": %t,
 			"blk": %t
 		    }
-		}`, t_ip, vmv1.MigrationPort, virtualmachinemigration.Spec.Incremental, !virtualmachinemigration.Spec.Incremental))
+		}`, t_ip, vmv1.MigrationPort, inc, blk))
 	_, err = smon.Run(qmpcmd)
 	if err != nil {
 		return err
