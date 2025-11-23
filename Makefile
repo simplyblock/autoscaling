@@ -321,8 +321,9 @@ docker-build-vm-postgres: bin/vm-builder ## Build docker images for testing VMs
 .PHONY: docker-build-pg16-disk-test
 docker-build-pg16-disk-test: bin/vm-builder ## Build a VM image for testing
 	./bin/vm-builder \
-		-src alpine:$(ALPINE_IMG_TAG)$(ALPINE_IMG_SHA) \
+		-src supabase/postgres:17.6.1.054 \
 		-dst $(PG16_DISK_TEST_IMG) \
+		-size 3G \
 		-build-arg ALPINE_IMG_TAG=$(ALPINE_IMG_TAG) \
 		-build-arg ALPINE_IMG_SHA=$(ALPINE_IMG_SHA) \
 		-build-arg RUST_IMG_TAG=$(RUST_IMG_TAG) \

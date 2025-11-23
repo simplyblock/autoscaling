@@ -98,16 +98,27 @@ RUN chmod +rx /neonvm/bin/set-disk-quota
 FROM rootdisk AS rootdisk-mod
 COPY --from=vm-runtime /neonvm /neonvm
 # setup chrony
+# setup chrony
 RUN set -e \
-    && /neonvm/bin/id -g chrony > /dev/null 2>&1 || /neonvm/bin/addgroup chrony \
-    && /neonvm/bin/id -u chrony > /dev/null 2>&1 || /neonvm/bin/adduser -D -H -G chrony -g 'chrony' -s /neonvm/bin/nologin chrony \
+    && if ! getent group chrony > /dev/null 2>&1; then \
+        groupadd -r chrony 2>/dev/null || /neonvm/bin/addgroup -S chrony; \
+    fi \
+    && if ! getent passwd chrony > /dev/null 2>&1; then \
+        useradd -r -g chrony -d /var/lib/chrony -s /sbin/nologin chrony 2>/dev/null \
+        || /neonvm/bin/adduser -S -G chrony -H -h /var/lib/chrony -s /neonvm/bin/nologin chrony; \
+    fi \
     && /neonvm/bin/mkdir -p /var/lib/chrony \
     && /neonvm/bin/chown chrony:chrony /var/lib/chrony \
     && /neonvm/bin/mkdir -p /var/log/chrony
 # setup sshd user and group to support sshd UsePrivilegeSeparation
 RUN set -e \
-    && /neonvm/bin/id -g sshd > /dev/null 2>&1 || /neonvm/bin/addgroup sshd \
-    && /neonvm/bin/id -u sshd > /dev/null 2>&1 || /neonvm/bin/adduser -D -H -G sshd -g 'sshd privsep' -s /neonvm/bin/nologin sshd
+    && if ! getent group sshd > /dev/null 2>&1; then \
+        groupadd -r sshd 2>/dev/null || /neonvm/bin/addgroup -S sshd; \
+    fi \
+    && if ! getent passwd sshd > /dev/null 2>&1; then \
+        useradd -r -g sshd -d /var/empty -s /sbin/nologin sshd 2>/dev/null \
+        || /neonvm/bin/adduser -S -G sshd -H -h /var/empty -s /neonvm/bin/nologin sshd; \
+    fi
 
 FROM {{.AlpineImage}}:{{.AlpineImageTag}}{{.AlpineImageSha}} AS builder
 ARG VM_BUILDER_DISK_SIZE

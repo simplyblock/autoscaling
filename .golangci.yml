@@ -4,10 +4,10 @@ run:
   issues-exit-code: 1
 output:
   formats:
-    text:
+    - format: colored-line-number
       path: stdout
-      print-linter-name: true
-      print-issued-lines: true
+  print-linter-name: true
+  print-issued-lines: true
 
 linters:
   enable:

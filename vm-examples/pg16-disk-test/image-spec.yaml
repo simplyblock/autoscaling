@@ -24,10 +24,8 @@ commands:
   - name: start-postgres
     user: postgres
     sysvInitAction: once
-    shell: 'PGDATA=/data pg_ctl start -o "-c config_file=/etc/postgresql.conf -c hba_file=/etc/pg_hba.conf" -l /tmp/neon-logs.fifo'
+    shell: 'PGDATA=/var/lib/postgresql/data pg_ctl start -o "-c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/pg_hba.conf" -l /tmp/neon-logs.fifo'
 files:
-  - filename: postgresql.conf
-    hostPath: postgresql.conf
   - filename: pg_hba.conf
     hostPath: pg_hba.conf
   - filename: allocate-loop.c
@@ -69,35 +67,39 @@ build: |
       && gcc -g -O allocate-loop.c -o /bin/allocate-loop
 
 merge: |
-  RUN adduser vm-monitor --disabled-password --no-create-home
+  RUN useradd -M vm-monitor
 
   COPY cgconfig.conf         /etc/cgconfig.conf
-  COPY postgresql.conf       /etc/postgresql.conf
   COPY pg_hba.conf           /etc/pg_hba.conf
 
   # General tools
   RUN set -e \
-      && apk add --no-cache \
+      && apt-get update \
+      && apt-get install -y \
               ca-certificates \
-              util-linux-misc \
+              util-linux \
               coreutils \
               cgroup-tools
 
-  # postgresql stuff
-  RUN set -e \
-        && apk add --no-cache \
-                su-exec \
-                postgresql16
-
   # Initialize postgres
-  ENV PGDATA=/var/lib/postgresql
+  ENV PGDATA=/var/lib/postgresql/data
   RUN set -e \
       && mkdir -p ${PGDATA} /run/postgresql \
       && chown -R postgres:postgres ${PGDATA} /run/postgresql \
-      && su-exec postgres pg_ctl init
+      && chmod 700 ${PGDATA} \
+      && su postgres -c "initdb -D ${PGDATA}"
+
+  # Start Postgres and run Supabase initialization
+  RUN set -e \
+      && su postgres -c "pg_ctl -D ${PGDATA} -o '-c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/pg_hba.conf' start" \
+      && sleep 5 \
+      && su postgres -c "psql -c \"CREATE ROLE supabase_admin WITH SUPERUSER LOGIN PASSWORD 'postgres';\"" \
+      && rm /docker-entrypoint-initdb.d/migrations/10000000000000_demote-postgres.sql \
+      && /docker-entrypoint-initdb.d/migrate.sh \
+      && su postgres -c "pg_ctl -D ${PGDATA} stop"
 
   COPY --from=allocate-loop-builder /bin/allocate-loop        /bin/allocate-loop
   COPY --from=monitor-builder       /workspace/bin/vm-monitor /bin/vm-monitor
 
   # set the greeting message on ssh logins
-  RUN echo -e 'Welcome to Alpine!\n ~ This is the VM :) ~' >/etc/motd
+  RUN echo 'Welcome to Supabase Postgres 17 VM!' >/etc/motd
