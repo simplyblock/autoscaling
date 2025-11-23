@@ -699,6 +699,11 @@ func (in *VirtualMachineMigrationSpec) DeepCopyInto(out *VirtualMachineMigration
 		*out = new(corev1.NodeAffinity)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.BlockMigration != nil {
+		in, out := &in.BlockMigration, &out.BlockMigration
+		*out = new(bool)
+		**out = **in
+	}
 	out.MaxBandwidth = in.MaxBandwidth.DeepCopy()
 }
 
