@@ -8,7 +8,7 @@ commands:
   - name: postgres-data
     user: root
     sysvInitAction: sysinit
-    shell: 'PGDATA=/var/lib/postgresql/data; mkdir -p $PGDATA /run/postgresql && chown -R postgres:postgres $PGDATA /run/postgresql && [ -s "$PGDATA/PG_VERSION" ] || su-exec postgres PGDATA=$PGDATA pg_ctl init'
+    shell: 'PGDATA=/var/lib/postgresql/data; mkdir -p $PGDATA /run/postgresql && chown -R postgres:postgres $PGDATA /run/postgresql && [ -s "$PGDATA/PG_VERSION" ] || su-exec postgres sh -c "PGDATA=$PGDATA pg_ctl init"'
   - name: vm-monitor
     user: vm-monitor
     sysvInitAction: respawn
