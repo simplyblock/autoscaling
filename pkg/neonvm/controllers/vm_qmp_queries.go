@@ -441,6 +441,10 @@ func QmpStartMigration(virtualmachine *vmv1.VirtualMachine, virtualmachinemigrat
 	if !blk {
 		inc = false
 	}
+	if virtualmachinemigration.Spec.SkipDiskMigration {
+		blk = false
+		inc = false
+	}
 	qmpcmd = []byte(fmt.Sprintf(`{
 		"execute": "migrate",
 		"arguments":
