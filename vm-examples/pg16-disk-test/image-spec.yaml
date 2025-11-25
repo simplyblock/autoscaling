@@ -5,10 +5,14 @@ commands:
     user: root
     sysvInitAction: sysinit
     shell: '/usr/sbin/cgconfigparser -l /etc/cgconfig.conf -s 1664'
-  - name: postgres-data
+  - name: containerd
     user: root
-    sysvInitAction: sysinit
-    shell: 'PGDATA=/var/lib/postgresql/data; mkdir -p $PGDATA /run/postgresql && chown -R postgres:postgres $PGDATA /run/postgresql && [ -s "$PGDATA/PG_VERSION" ] || su-exec postgres sh -c "PGDATA=$PGDATA pg_ctl init"'
+    sysvInitAction: respawn
+    shell: '/usr/bin/containerd'
+  - name: load-image
+    user: root
+    sysvInitAction: wait
+    shell: 'until [ -S /run/containerd/containerd.sock ]; do sleep 1; done; ctr images import /var/lib/images/postgres.tar'
   - name: vm-monitor
     user: vm-monitor
     sysvInitAction: respawn
@@ -21,13 +25,11 @@ commands:
     user: root
     sysvInitAction: respawn
     shell: 'cat /tmp/neon-logs.fifo > /dev/virtio-ports/tech.neon.log.0'
-  - name: start-postgres
-    user: postgres
-    sysvInitAction: once
-    shell: 'PGDATA=/var/lib/postgresql/data pg_ctl start -o "-c config_file=/etc/postgresql.conf -c hba_file=/etc/pg_hba.conf" -l /tmp/neon-logs.fifo'
+  - name: run-postgres
+    user: root
+    sysvInitAction: respawn
+    shell: 'ctr run --rm --net-host --env POSTGRES_PASSWORD="$POSTGRES_PASSWORD" --env JWT_SECRET="asdfasdfasdf" --env JWT_EXP=3600 --mount type=bind,src=/mnt/postgres_data/pgdata,dst=/var/lib/postgresql/data,options=rbind:rw --mount type=bind,src=/etc/pg_hba.conf,dst=/etc/postgresql/pg_hba.conf,options=rbind:ro docker.io/supabase/postgres:15.1.0.147 vela-db'
 files:
-  - filename: postgresql.conf
-    hostPath: postgresql.conf
   - filename: pg_hba.conf
     hostPath: pg_hba.conf
   - filename: allocate-loop.c
@@ -74,7 +76,6 @@ merge: |
   RUN adduser vm-monitor --disabled-password --no-create-home
 
   COPY cgconfig.conf         /etc/cgconfig.conf
-  COPY postgresql.conf       /etc/postgresql.conf
   COPY pg_hba.conf           /etc/pg_hba.conf
 
   # General tools
@@ -83,13 +84,14 @@ merge: |
               ca-certificates \
               util-linux-misc \
               coreutils \
-              cgroup-tools
+              cgroup-tools \
+              containerd \
+              skopeo
 
-  # postgresql stuff
+  # Pre-pull postgres image
   RUN set -e \
-        && apk add --no-cache \
-                su-exec \
-                postgresql16
+      && mkdir -p /var/lib/images \
+      && skopeo copy docker://docker.io/supabase/postgres:15.1.0.147 docker-archive:/var/lib/images/postgres.tar
 
   COPY --from=allocate-loop-builder /bin/allocate-loop        /bin/allocate-loop
   COPY --from=monitor-builder       /workspace/bin/vm-monitor /bin/vm-monitor
