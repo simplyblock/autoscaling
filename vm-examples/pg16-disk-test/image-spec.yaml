@@ -5,14 +5,7 @@ commands:
     user: root
     sysvInitAction: sysinit
     shell: '/usr/sbin/cgconfigparser -l /etc/cgconfig.conf -s 1664'
-  - name: containerd
-    user: root
-    sysvInitAction: respawn
-    shell: '/usr/bin/containerd'
-  - name: load-image
-    user: root
-    sysvInitAction: wait
-    shell: 'until [ -S /run/containerd/containerd.sock ]; do sleep 1; done; ctr images import /var/lib/images/postgres.tar'
+  # containerd + load-image REMOVED – we don't use a daemon or ctr anymore
   - name: vm-monitor
     user: vm-monitor
     sysvInitAction: respawn
@@ -28,7 +21,8 @@ commands:
   - name: run-postgres
     user: root
     sysvInitAction: respawn
-    shell: 'if [ -f /neonvm/runtime/env.sh ]; then . /neonvm/runtime/env.sh; fi; ctr run --rm --net-host --env POSTGRES_PASSWORD="$POSTGRES_PASSWORD" --env JWT_SECRET="$POSTGRES_PASSWORD" --env JWT_EXP=3600 --mount type=bind,src=/var/lib/postgresql/data,dst=/var/lib/postgresql/data,options=rbind:rw --mount type=bind,src=/etc/pg_hba.conf,dst=/etc/postgresql/pg_hba.conf,options=rbind:ro docker.io/supabase/postgres:15.1.0.147 vela-db'
+    shell: '/usr/local/bin/run-postgres-runc.sh'
+
 files:
   - filename: pg_hba.conf
     hostPath: pg_hba.conf
@@ -36,6 +30,7 @@ files:
     hostPath: allocate-loop.c
   - filename: cgconfig.conf
     hostPath: cgconfig.conf
+
 build: |
   ARG RUST_IMG_TAG=replaceme
   ARG RUST_IMG_SHA=replaceme
@@ -78,21 +73,74 @@ merge: |
   COPY cgconfig.conf         /etc/cgconfig.conf
   COPY pg_hba.conf           /etc/pg_hba.conf
 
-  # General tools
+  # General tools: no containerd; we use runc+umoci+skopo+jq
   RUN set -e \
       && apk add --no-cache \
               ca-certificates \
               util-linux-misc \
               coreutils \
               cgroup-tools \
-              containerd \
-              containerd-ctr \
-              skopeo
+              skopeo \
+              runc \
+              umoci \
+              jq
 
-  # Pre-pull postgres image
+  # Pre-fetch and unpack Supabase Postgres into an OCI bundle for runc
   RUN set -e \
-      && mkdir -p /var/lib/images \
-      && skopeo copy docker://docker.io/supabase/postgres:15.1.0.147 docker-archive:/var/lib/images/postgres.tar
+      && mkdir -p /opt/postgres-oci /opt/postgres-bundle \
+      && skopeo copy docker://docker.io/supabase/postgres:15.1.0.147 oci:/opt/postgres-oci:latest \
+      && umoci unpack --image /opt/postgres-oci:latest /opt/postgres-bundle \
+      && cd /opt/postgres-bundle \
+      # Make config host-network and add host bind mounts
+      && jq '
+           .linux.namespaces |= map(select(.type != "network")) 
+           | .mounts += [
+               {
+                 "destination": "/var/lib/postgresql/data",
+                 "type": "bind",
+                 "source": "/var/lib/postgresql/data",
+                 "options": ["rbind","rw"]
+               },
+               {
+                 "destination": "/etc/postgresql/pg_hba.conf",
+                 "type": "bind",
+                 "source": "/etc/pg_hba.conf",
+                 "options": ["rbind","ro"]
+               }
+             ]
+           | .process.env = []
+         ' config.json > config.template.json \
+      && rm config.json \
+      && rm -rf /opt/postgres-oci
+
+  # Simple wrapper to regenerate config.json with runtime env and run runc
+  RUN cat >/usr/local/bin/run-postgres-runc.sh << 'EOF'
+#!/bin/sh
+set -e
+
+# Load env / secrets if provided by the platform
+if [ -f /neonvm/runtime/env.sh ]; then
+  . /neonvm/runtime/env.sh
+fi
+
+: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set}"
+: "${JWT_SECRET:=$POSTGRES_PASSWORD}"
+
+cd /opt/postgres-bundle
+
+# Generate config.json from template, injecting env vars
+jq '
+  .process.env = [
+    "POSTGRES_PASSWORD=" + env.POSTGRES_PASSWORD,
+    "JWT_SECRET=" + env.JWT_SECRET,
+    "JWT_EXP=3600"
+  ]
+' config.template.json > config.json
+
+exec runc run vela-db
+EOF
+
+  RUN chmod +x /usr/local/bin/run-postgres-runc.sh
 
   COPY --from=allocate-loop-builder /bin/allocate-loop        /bin/allocate-loop
   COPY --from=monitor-builder       /workspace/bin/vm-monitor /bin/vm-monitor
