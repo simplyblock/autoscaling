@@ -9,6 +9,9 @@ fi
 : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set}"
 : "${JWT_SECRET:=$POSTGRES_PASSWORD}"
 
+# Create the data directory if it doesn't exist
+mkdir -p /var/lib/postgresql/data
+
 cd /opt/postgres-bundle
 
 # Generate config.json from template, injecting env vars
