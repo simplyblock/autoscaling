@@ -25,6 +25,7 @@ jq '
       }
     ]
   | .process.env = []
+  | .process.args = ["/usr/local/bin/docker-entrypoint.sh", "postgres"]
 ' config.json > config.template.json
 
 rm config.json
