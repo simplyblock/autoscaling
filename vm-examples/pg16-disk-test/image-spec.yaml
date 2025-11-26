@@ -30,6 +30,10 @@ files:
     hostPath: allocate-loop.c
   - filename: cgconfig.conf
     hostPath: cgconfig.conf
+  - filename: run-postgres-runc.sh
+    hostPath: run-postgres-runc.sh
+  - filename: setup-postgres-bundle.sh
+    hostPath: setup-postgres-bundle.sh
 
 build: |
   ARG RUST_IMG_TAG=replaceme
@@ -86,60 +90,11 @@ merge: |
               jq
 
   # Pre-fetch and unpack Supabase Postgres into an OCI bundle for runc
-  RUN set -e \
-      && mkdir -p /opt/postgres-oci /opt/postgres-bundle \
-      && skopeo copy docker://docker.io/supabase/postgres:15.1.0.147 oci:/opt/postgres-oci:latest \
-      && umoci unpack --image /opt/postgres-oci:latest /opt/postgres-bundle \
-      && cd /opt/postgres-bundle \
-      # Make config host-network and add host bind mounts
-      && jq '
-           .linux.namespaces |= map(select(.type != "network")) 
-           | .mounts += [
-               {
-                 "destination": "/var/lib/postgresql/data",
-                 "type": "bind",
-                 "source": "/var/lib/postgresql/data",
-                 "options": ["rbind","rw"]
-               },
-               {
-                 "destination": "/etc/postgresql/pg_hba.conf",
-                 "type": "bind",
-                 "source": "/etc/pg_hba.conf",
-                 "options": ["rbind","ro"]
-               }
-             ]
-           | .process.env = []
-         ' config.json > config.template.json \
-      && rm config.json \
-      && rm -rf /opt/postgres-oci
+  COPY setup-postgres-bundle.sh /tmp/setup-postgres-bundle.sh
+  RUN chmod +x /tmp/setup-postgres-bundle.sh && /tmp/setup-postgres-bundle.sh && rm /tmp/setup-postgres-bundle.sh
 
-  # Simple wrapper to regenerate config.json with runtime env and run runc
-  RUN cat >/usr/local/bin/run-postgres-runc.sh << 'EOF'
-#!/bin/sh
-set -e
-
-# Load env / secrets if provided by the platform
-if [ -f /neonvm/runtime/env.sh ]; then
-  . /neonvm/runtime/env.sh
-fi
-
-: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD not set}"
-: "${JWT_SECRET:=$POSTGRES_PASSWORD}"
-
-cd /opt/postgres-bundle
-
-# Generate config.json from template, injecting env vars
-jq '
-  .process.env = [
-    "POSTGRES_PASSWORD=" + env.POSTGRES_PASSWORD,
-    "JWT_SECRET=" + env.JWT_SECRET,
-    "JWT_EXP=3600"
-  ]
-' config.template.json > config.json
-
-exec runc run vela-db
-EOF
-
+  # Copy and install the postgres runc wrapper script
+  COPY run-postgres-runc.sh /usr/local/bin/run-postgres-runc.sh
   RUN chmod +x /usr/local/bin/run-postgres-runc.sh
 
   COPY --from=allocate-loop-builder /bin/allocate-loop        /bin/allocate-loop
