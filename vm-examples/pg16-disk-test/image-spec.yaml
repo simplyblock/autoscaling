@@ -28,7 +28,7 @@ commands:
   - name: run-postgres
     user: root
     sysvInitAction: respawn
-    shell: 'ctr run --rm --net-host --env POSTGRES_PASSWORD="$POSTGRES_PASSWORD" --env JWT_SECRET="asdfasdfasdf" --env JWT_EXP=3600 --mount type=bind,src=/mnt/postgres_data/pgdata,dst=/var/lib/postgresql/data,options=rbind:rw --mount type=bind,src=/etc/pg_hba.conf,dst=/etc/postgresql/pg_hba.conf,options=rbind:ro docker.io/supabase/postgres:15.1.0.147 vela-db'
+    shell: 'if [ -f /neonvm/runtime/env.sh ]; then . /neonvm/runtime/env.sh; fi; ctr run --rm --net-host --env POSTGRES_PASSWORD="$POSTGRES_PASSWORD" --env JWT_SECRET="$POSTGRES_PASSWORD" --env JWT_EXP=3600 --mount type=bind,src=/var/lib/postgresql/data,dst=/var/lib/postgresql/data,options=rbind:rw --mount type=bind,src=/etc/pg_hba.conf,dst=/etc/postgresql/pg_hba.conf,options=rbind:ro docker.io/supabase/postgres:15.1.0.147 vela-db'
 files:
   - filename: pg_hba.conf
     hostPath: pg_hba.conf
@@ -86,6 +86,7 @@ merge: |
               coreutils \
               cgroup-tools \
               containerd \
+              containerd-ctr \
               skopeo
 
   # Pre-pull postgres image
