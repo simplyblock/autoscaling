@@ -635,6 +635,23 @@ type ExtraNetwork struct {
 	MultusNetwork string `json:"multusNetwork,omitempty"`
 }
 
+// BlockDeviceStatus describes the observed state of a PVC-backed block device attached to the VM.
+type BlockDeviceStatus struct {
+	// Name matches the disk name under .spec.disks.
+	Name string `json:"name"`
+	// PVCName is the claim name backing this block device.
+	PVCName string `json:"pvcName,omitempty"`
+	// RequestedStorage is the desired storage request from the VM spec.
+	// +optional
+	RequestedStorage *resource.Quantity `json:"requestedStorage,omitempty"`
+	// CurrentStorage is the observed storage size from the PVC.
+	// +optional
+	CurrentStorage *resource.Quantity `json:"currentStorage,omitempty"`
+	// Resizing indicates that the PVC has not yet reached the requested size.
+	// +optional
+	Resizing bool `json:"resizing,omitempty"`
+}
+
 // VirtualMachineStatus defines the observed state of VirtualMachine
 type VirtualMachineStatus struct {
 	// Represents the observations of a VirtualMachine's current state.
@@ -672,6 +689,9 @@ type VirtualMachineStatus struct {
 	SSHSecretName string `json:"sshSecretName,omitempty"`
 	// +optional
 	TLSSecretName string `json:"tlsSecretName,omitempty"`
+	// BlockDevices reports the observed state of PVC-backed block devices.
+	// +optional
+	BlockDevices []BlockDeviceStatus `json:"blockDevices,omitempty"`
 
 	// CurrentRevision is updated with Spec.TargetRevision's value once
 	// the changes are propagated to the VM.

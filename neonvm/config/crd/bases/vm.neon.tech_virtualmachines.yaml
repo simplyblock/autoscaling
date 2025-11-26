@@ -3138,6 +3138,43 @@ spec:
           status:
             description: VirtualMachineStatus defines the observed state of VirtualMachine
             properties:
+              blockDevices:
+                description: BlockDevices reports the observed state of PVC-backed
+                  block devices.
+                items:
+                  description: BlockDeviceStatus describes the observed state of a
+                    PVC-backed block device attached to the VM.
+                  properties:
+                    currentStorage:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      description: CurrentStorage is the observed storage size from
+                        the PVC.
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    name:
+                      description: Name matches the disk name under .spec.disks.
+                      type: string
+                    pvcName:
+                      description: PVCName is the claim name backing this block device.
+                      type: string
+                    requestedStorage:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      description: RequestedStorage is the desired storage request
+                        from the VM spec.
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    resizing:
+                      description: Resizing indicates that the PVC has not yet reached
+                        the requested size.
+                      type: boolean
+                  required:
+                  - name
+                  type: object
+                type: array
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

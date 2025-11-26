@@ -215,6 +215,8 @@ func (r *VMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Re
 		vm.Status.Phase == vmv1.VmMigrating ||
 		vm.Status.Phase == vmv1.VmPreMigrating {
 		requeueAfter = time.Second
+	} else if blockDevicesResizing(vm.Status.BlockDevices) && requeueAfter > 5*time.Second {
+		requeueAfter = 5 * time.Second
 	}
 
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
@@ -346,6 +348,12 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		}
 	}
 
+	blockDeviceStatuses, err := r.reconcileBlockDevicePVCs(ctx, vm)
+	if err != nil {
+		return err
+	}
+	vm.Status.BlockDevices = blockDeviceStatuses
+
 	powerState := vm.Spec.PowerState
 	if powerState == "" {
 		powerState = vmv1.PowerStateRunning
@@ -440,11 +448,6 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 					log.Error(err, "Failed to get SSH Secret")
 					return err
 				}
-			}
-
-			if err := r.ensureBlockDevicePVCs(ctx, vm); err != nil {
-				log.Error(err, "Failed to ensure block device PVCs")
-				return err
 			}
 
 			// Define a new pod
@@ -1141,9 +1144,10 @@ func extractVirtualMachineOvercommitSettingsJSON(spec vmv1.VirtualMachineSpec) *
 	return lo.ToPtr(string(settingsJSON))
 }
 
-// podForVirtualMachine returns a VirtualMachine Pod object
-func (r *VMReconciler) ensureBlockDevicePVCs(ctx context.Context, vm *vmv1.VirtualMachine) error {
+func (r *VMReconciler) reconcileBlockDevicePVCs(ctx context.Context, vm *vmv1.VirtualMachine) ([]vmv1.BlockDeviceStatus, error) {
 	logger := log.FromContext(ctx)
+
+	var statuses []vmv1.BlockDeviceStatus
 
 	for _, disk := range vm.Spec.Disks {
 		if disk.BlockDevice == nil {
@@ -1152,12 +1156,37 @@ func (r *VMReconciler) ensureBlockDevicePVCs(ctx context.Context, vm *vmv1.Virtu
 		device := disk.BlockDevice
 		if device.ExistingClaimName != "" {
 			if device.PersistentVolumeClaim != nil {
-				return fmt.Errorf("disk %q cannot set both blockDevice.existingClaimName and blockDevice.persistentVolumeClaim", disk.Name)
+				return nil, fmt.Errorf("disk %q cannot set both blockDevice.existingClaimName and blockDevice.persistentVolumeClaim", disk.Name)
 			}
+			status := vmv1.BlockDeviceStatus{
+				Name:    disk.Name,
+				PVCName: device.ExistingClaimName,
+			}
+			pvc := &corev1.PersistentVolumeClaim{}
+			if err := r.Get(ctx, types.NamespacedName{Name: device.ExistingClaimName, Namespace: vm.Namespace}, pvc); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return nil, err
+				}
+			} else {
+				status.CurrentStorage, _ = pvcStorageCapacity(pvc)
+			}
+			statuses = append(statuses, status)
 			continue
 		}
 		if device.PersistentVolumeClaim == nil {
-			return fmt.Errorf("disk %q requires blockDevice.persistentVolumeClaim when blockDevice.existingClaimName is empty", disk.Name)
+			return nil, fmt.Errorf("disk %q requires blockDevice.persistentVolumeClaim when blockDevice.existingClaimName is empty", disk.Name)
+		}
+
+		requestedStorage, hasRequestedStorage := device.PersistentVolumeClaim.Resources.Requests[corev1.ResourceStorage]
+		if !hasRequestedStorage {
+			return nil, fmt.Errorf("disk %q requires blockDevice.persistentVolumeClaim.resources.requests.storage", disk.Name)
+		}
+		requestedCopy := requestedStorage.DeepCopy()
+
+		status := vmv1.BlockDeviceStatus{
+			Name:             disk.Name,
+			PVCName:          blockDevicePVCName(vm, disk),
+			RequestedStorage: &requestedCopy,
 		}
 
 		nn := types.NamespacedName{
@@ -1167,9 +1196,13 @@ func (r *VMReconciler) ensureBlockDevicePVCs(ctx context.Context, vm *vmv1.Virtu
 
 		current := &corev1.PersistentVolumeClaim{}
 		if err := r.Get(ctx, nn, current); err == nil {
+			if err := r.syncBlockDevicePVC(ctx, vm, disk, current, requestedStorage, &status); err != nil {
+				return nil, err
+			}
+			statuses = append(statuses, status)
 			continue
 		} else if !apierrors.IsNotFound(err) {
-			return err
+			return nil, err
 		}
 
 		pvc := &corev1.PersistentVolumeClaim{
@@ -1191,13 +1224,47 @@ func (r *VMReconciler) ensureBlockDevicePVCs(ctx context.Context, vm *vmv1.Virtu
 		pvc.Spec.Resources = resources
 
 		if err := ctrl.SetControllerReference(vm, pvc, r.Scheme); err != nil {
-			return err
+			return nil, err
 		}
 
-		logger.Info("Creating PVC for block device", "VirtualMachine", vm.Name, "Disk", disk.Name, "PVC", pvc.Name)
+		logger.Info("Creating PVC for block device", "VirtualMachine", vm.Name, "Disk", disk.Name, "PVC", pvc.Name, "RequestedStorage", requestedStorage.String())
 		if err := r.Create(ctx, pvc); err != nil {
+			return nil, err
+		}
+
+		status.Resizing = true
+		statuses = append(statuses, status)
+	}
+
+	return statuses, nil
+}
+
+func (r *VMReconciler) syncBlockDevicePVC(
+	ctx context.Context,
+	vm *vmv1.VirtualMachine,
+	disk vmv1.Disk,
+	pvc *corev1.PersistentVolumeClaim,
+	requestedStorage resource.Quantity,
+	status *vmv1.BlockDeviceStatus,
+) error {
+	logger := log.FromContext(ctx)
+
+	currentRequest, hasCurrentRequest := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	if !hasCurrentRequest || requestedStorage.Cmp(currentRequest) > 0 {
+		if pvc.Spec.Resources.Requests == nil {
+			pvc.Spec.Resources.Requests = corev1.ResourceList{}
+		}
+		pvc.Spec.Resources.Requests[corev1.ResourceStorage] = requestedStorage
+		logger.Info("Updating PVC storage request for block device", "VirtualMachine", vm.Name, "Disk", disk.Name, "PVC", pvc.Name, "RequestedStorage", requestedStorage.String(), "CurrentRequest", currentRequest.String())
+		if err := r.Update(ctx, pvc); err != nil {
 			return err
 		}
+	}
+
+	currentStorage, observed := pvcStorageCapacity(pvc)
+	status.CurrentStorage = currentStorage
+	if status.RequestedStorage != nil {
+		status.Resizing = currentStorage == nil || !observed || currentStorage.Cmp(*status.RequestedStorage) < 0
 	}
 
 	return nil
@@ -1220,6 +1287,28 @@ func blockDeviceVolumeName(disk vmv1.Disk) string {
 	return fmt.Sprintf("block-%s", disk.Name)
 }
 
+func pvcStorageCapacity(pvc *corev1.PersistentVolumeClaim) (*resource.Quantity, bool) {
+	if storage, ok := pvc.Status.Capacity[corev1.ResourceStorage]; ok {
+		storageCopy := storage.DeepCopy()
+		return &storageCopy, true
+	}
+	if storage, ok := pvc.Spec.Resources.Requests[corev1.ResourceStorage]; ok {
+		storageCopy := storage.DeepCopy()
+		return &storageCopy, false
+	}
+	return nil, false
+}
+
+func blockDevicesResizing(statuses []vmv1.BlockDeviceStatus) bool {
+	for _, status := range statuses {
+		if status.Resizing {
+			return true
+		}
+	}
+	return false
+}
+
+// podForVirtualMachine returns a VirtualMachine Pod object
 func (r *VMReconciler) podForVirtualMachine(
 	vm *vmv1.VirtualMachine,
 	sshSecret *corev1.Secret,
