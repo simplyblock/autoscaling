@@ -104,6 +104,10 @@ func (r *VirtualMachine) ValidateCreate() (admission.Warnings, error) {
 		}
 	}
 
+	if err := validateBlockDevices(r.Spec.Disks); err != nil {
+		return nil, err
+	}
+
 	return nil, nil
 }
 
@@ -186,6 +190,10 @@ func (r *VirtualMachine) ValidateUpdate(old runtime.Object) (admission.Warnings,
 			r.Spec.Guest.MemorySlots.Max)
 	}
 
+	if err := validateBlockDevices(r.Spec.Disks); err != nil {
+		return nil, err
+	}
+
 	return nil, nil
 }
 
@@ -195,6 +203,40 @@ func (r *VirtualMachine) ValidateUpdate(old runtime.Object) (admission.Warnings,
 func (r *VirtualMachine) ValidateDelete() (admission.Warnings, error) {
 	// No deletion validation required currently.
 	return nil, nil
+}
+
+func validateBlockDevices(disks []Disk) error {
+	for _, disk := range disks {
+		if disk.BlockDevice == nil {
+			continue
+		}
+		device := disk.BlockDevice
+		pvc := device.PersistentVolumeClaim
+
+		if device.ExistingClaimName != "" {
+			if pvc != nil {
+				return fmt.Errorf("disk %q cannot set both blockDevice.existingClaimName and blockDevice.persistentVolumeClaim", disk.Name)
+			}
+			continue
+		}
+
+		if pvc == nil {
+			return fmt.Errorf("disk %q requires blockDevice.persistentVolumeClaim when blockDevice.existingClaimName is empty", disk.Name)
+		}
+
+		if pvc.ClaimName != "" {
+			if pvc.StorageClassName != nil || len(pvc.AccessModes) > 0 || !pvcResourcesEmpty(pvc.Resources) {
+				return fmt.Errorf("disk %q cannot set blockDevice.persistentVolumeClaim.claimName together with storageClassName, accessModes, or resources", disk.Name)
+			}
+			continue
+		}
+
+		if !pvcHasStorageRequest(pvc.Resources) {
+			return fmt.Errorf("disk %q requires blockDevice.persistentVolumeClaim.resources.requests.storage when claimName is empty", disk.Name)
+		}
+	}
+
+	return nil
 }
 
 func validateDiskUpdates(before, after []Disk) error {
@@ -240,4 +282,19 @@ func normalizeDiskForComparison(d Disk) Disk {
 	}
 
 	return copy
+}
+
+func pvcHasStorageRequest(resources corev1.VolumeResourceRequirements) bool {
+	if resources.Requests == nil {
+		return false
+	}
+	request, ok := resources.Requests[corev1.ResourceStorage]
+	if !ok {
+		return false
+	}
+	return !request.IsZero()
+}
+
+func pvcResourcesEmpty(resources corev1.VolumeResourceRequirements) bool {
+	return len(resources.Requests) == 0 && len(resources.Limits) == 0
 }

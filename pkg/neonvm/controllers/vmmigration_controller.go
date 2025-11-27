@@ -764,10 +764,7 @@ func (r *VirtualMachineMigrationReconciler) ensureBlockDevicesMigrationReady(
 		if disk.BlockDevice == nil {
 			continue
 		}
-		claimName := disk.BlockDevice.ExistingClaimName
-		if claimName == "" {
-			claimName = blockDevicePVCName(vm, disk)
-		}
+		claimName := blockDeviceClaimName(vm, disk)
 
 		pvc := &corev1.PersistentVolumeClaim{}
 		if err := r.Get(ctx, types.NamespacedName{Name: claimName, Namespace: vm.Namespace}, pvc); err != nil {

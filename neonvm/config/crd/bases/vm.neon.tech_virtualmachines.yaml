@@ -1027,6 +1027,11 @@ spec:
                               items:
                                 type: string
                               type: array
+                            claimName:
+                              description: ClaimName references an existing PersistentVolumeClaim
+                                to attach to the VM. When set, NeonVM will not create
+                                or manage the PVC.
+                              type: string
                             resources:
                               description: Resources defines the storage requests/limits
                                 for the PVC.
@@ -1060,8 +1065,6 @@ spec:
                               description: StorageClassName is the storage class used
                                 for the PVC.
                               type: string
-                          required:
-                          - resources
                           type: object
                       type: object
                     configMap:

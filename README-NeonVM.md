@@ -43,12 +43,7 @@ spec:
       mountPath: /var/lib/postgresql/data
       blockDevice:
         persistentVolumeClaim:
-          storageClassName: simplyblock-csi-sc
-          accessModes:
-            - ReadWriteMany
-          resources:
-            requests:
-              storage: 20Gi
+          claimName: my-existing-data-pvc
 EOF
 ```
 
@@ -73,7 +68,20 @@ spec:
 Because the filesystem lives on the PVC, the contents survive VM restarts without any guest-side bootstrapping.
 
 PVC expansions are detected automatically. Once the underlying claim grows, NeonVM resizes the attached virtio disk and runs `resize2fs` inside the guest so the filesystem fills the new space without manual intervention.
+
+To reuse a PVC managed outside the VM definition, provide a claim name instead of provisioning details:
+
+```yaml
+spec:
+  disks:
+    - name: data
+      mountPath: /var/lib/postgresql
+      blockDevice:
+        persistentVolumeClaim:
+          claimName: my-existing-data-pvc
 ```
+
+When `claimName` is set, NeonVM skips creating the PVC and simply attaches the existing volume to the VM.
 
 ### Check virtual machine running
 

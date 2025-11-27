@@ -19,9 +19,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 
 	vmv1 "github.com/neondatabase/autoscaling/neonvm/apis/neonvm/v1"
 )
@@ -80,6 +82,7 @@ func newTestParams(t *testing.T) *testParams {
 	scheme.AddKnownTypes(vmv1.SchemeGroupVersion, &vmv1.VirtualMachine{})
 	scheme.AddKnownTypes(corev1.SchemeGroupVersion, &corev1.Pod{})
 	scheme.AddKnownTypes(corev1.SchemeGroupVersion, &corev1.Secret{})
+	scheme.AddKnownTypes(corev1.SchemeGroupVersion, &corev1.PersistentVolumeClaim{})
 	scheme.AddKnownTypes(certv1.SchemeGroupVersion, &certv1.CertificateRequest{})
 
 	params := &testParams{
@@ -321,4 +324,35 @@ func TestNodeAffinity(t *testing.T) {
 		assert.Equal(t, corev1.NodeSelectorOpIn, affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[1].Operator)
 		assert.Equal(t, "amd64", affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[1].Values[0])
 	})
+}
+
+func TestBlockDeviceWithClaimName(t *testing.T) {
+	params := newTestParams(t)
+	vm := defaultVm()
+	vm.Spec.Disks = []vmv1.Disk{
+		{
+			Name:      "data",
+			MountPath: "/data",
+			DiskSource: vmv1.DiskSource{
+				BlockDevice: &vmv1.BlockDeviceSource{
+					PersistentVolumeClaim: &vmv1.BlockPersistentVolumeClaim{
+						ClaimName: "external-data",
+					},
+				},
+			},
+		},
+	}
+	vm = params.initVM(vm)
+
+	err := params.r.ensureBlockDevicePVCs(params.ctx, vm)
+	require.NoError(t, err)
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	err = params.client.Get(params.ctx, types.NamespacedName{
+		Name:      blockDevicePVCName(vm, vm.Spec.Disks[0]),
+		Namespace: vm.Namespace,
+	}, pvc)
+	assert.True(t, apierrors.IsNotFound(err), "expected PVC not to be created, got err=%v", err)
+
+	assert.Equal(t, "external-data", blockDeviceClaimName(vm, vm.Spec.Disks[0]))
 }
