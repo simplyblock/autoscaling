@@ -49,7 +49,7 @@ const (
 	qmpUnixSocketForSigtermHandler = "/vm/qmp-sigterm.sock"
 	logSerialSocket                = "/vm/log.sock"
 	bufferedReaderSize             = 4096
-	blockDeviceResizePollInterval  = 30 * time.Second
+	blockDeviceResizePollInterval  = 3 * time.Second
 )
 
 var qmpBlockResizeMutex sync.Mutex
