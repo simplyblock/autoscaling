@@ -1159,6 +1159,16 @@ func (r *VMReconciler) ensureBlockDevicePVCs(ctx context.Context, vm *vmv1.Virtu
 		if device.PersistentVolumeClaim == nil {
 			return fmt.Errorf("disk %q requires blockDevice.persistentVolumeClaim when blockDevice.existingClaimName is empty", disk.Name)
 		}
+		pvcSpec := device.PersistentVolumeClaim
+		if pvcSpec.ClaimName != "" {
+			if pvcHasProvisioningFields(*pvcSpec) {
+				return fmt.Errorf("disk %q cannot set blockDevice.persistentVolumeClaim.claimName together with storageClassName, accessModes, or resources", disk.Name)
+			}
+			continue
+		}
+		if !pvcHasStorageRequest(pvcSpec.Resources) {
+			return fmt.Errorf("disk %q requires blockDevice.persistentVolumeClaim.resources.requests.storage when claimName is empty", disk.Name)
+		}
 
 		nn := types.NamespacedName{
 			Name:      blockDevicePVCName(vm, disk),
@@ -1183,11 +1193,11 @@ func (r *VMReconciler) ensureBlockDevicePVCs(ctx context.Context, vm *vmv1.Virtu
 				VolumeMode:  lo.ToPtr(corev1.PersistentVolumeBlock),
 			},
 		}
-		if device.PersistentVolumeClaim.StorageClassName != nil {
-			pvc.Spec.StorageClassName = lo.ToPtr(*device.PersistentVolumeClaim.StorageClassName)
+		if pvcSpec.StorageClassName != nil {
+			pvc.Spec.StorageClassName = lo.ToPtr(*pvcSpec.StorageClassName)
 		}
 		var resources corev1.VolumeResourceRequirements
-		device.PersistentVolumeClaim.Resources.DeepCopyInto(&resources)
+		pvcSpec.Resources.DeepCopyInto(&resources)
 		pvc.Spec.Resources = resources
 
 		if err := ctrl.SetControllerReference(vm, pvc, r.Scheme); err != nil {
@@ -1210,6 +1220,38 @@ func getBlockAccessModes(modes []corev1.PersistentVolumeAccessMode) []corev1.Per
 	out := make([]corev1.PersistentVolumeAccessMode, len(modes))
 	copy(out, modes)
 	return out
+}
+
+func pvcHasProvisioningFields(pvc vmv1.BlockPersistentVolumeClaim) bool {
+	return pvc.StorageClassName != nil || len(pvc.AccessModes) > 0 || !pvcResourcesEmpty(pvc.Resources)
+}
+
+func pvcHasStorageRequest(resources corev1.VolumeResourceRequirements) bool {
+	if resources.Requests == nil {
+		return false
+	}
+	request, ok := resources.Requests[corev1.ResourceStorage]
+	if !ok {
+		return false
+	}
+	return !request.IsZero()
+}
+
+func pvcResourcesEmpty(resources corev1.VolumeResourceRequirements) bool {
+	return len(resources.Requests) == 0 && len(resources.Limits) == 0
+}
+
+func blockDeviceClaimName(vm *vmv1.VirtualMachine, disk vmv1.Disk) string {
+	if disk.BlockDevice == nil {
+		return ""
+	}
+	if pvc := disk.BlockDevice.PersistentVolumeClaim; pvc != nil && pvc.ClaimName != "" {
+		return pvc.ClaimName
+	}
+	if disk.BlockDevice.ExistingClaimName != "" {
+		return disk.BlockDevice.ExistingClaimName
+	}
+	return blockDevicePVCName(vm, disk)
 }
 
 func blockDevicePVCName(vm *vmv1.VirtualMachine, disk vmv1.Disk) string {
@@ -1768,10 +1810,7 @@ func podSpec(
 
 		switch {
 		case disk.BlockDevice != nil:
-			claimName := disk.BlockDevice.ExistingClaimName
-			if claimName == "" {
-				claimName = blockDevicePVCName(vm, disk)
-			}
+			claimName := blockDeviceClaimName(vm, disk)
 			volumeName := blockDeviceVolumeName(disk)
 			pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
 				Name: volumeName,

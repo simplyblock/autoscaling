@@ -601,6 +601,9 @@ type BlockDeviceSource struct {
 
 // BlockPersistentVolumeClaim describes a PVC to create for a block device attachment.
 type BlockPersistentVolumeClaim struct {
+	// ClaimName references an existing PersistentVolumeClaim to attach to the VM. When set, NeonVM will not create or manage the PVC.
+	// +optional
+	ClaimName string `json:"claimName,omitempty"`
 	// StorageClassName is the storage class used for the PVC.
 	// +optional
 	StorageClassName *string `json:"storageClassName,omitempty"`
@@ -608,7 +611,7 @@ type BlockPersistentVolumeClaim struct {
 	// +optional
 	AccessModes []corev1.PersistentVolumeAccessMode `json:"accessModes,omitempty"`
 	// Resources defines the storage requests/limits for the PVC.
-	Resources corev1.VolumeResourceRequirements `json:"resources"`
+	Resources corev1.VolumeResourceRequirements `json:"resources,omitempty"`
 }
 
 // RunnerDevicePath returns the path inside the runner Pod for this block device.
