@@ -1030,7 +1030,11 @@ func (s *state) pluginApprovedUpperBound() api.Resources {
 	if s.Plugin.Permit != nil {
 		return *s.Plugin.Permit
 	} else {
-		return s.VM.Using()
+		using := s.VM.Using()
+		limit := s.VM.Limiting()
+		cpuUpperBound := min(using.VCPU, limit.VCPU)
+		memUpperBound := min(using.Mem, limit.Mem)
+		return api.Resources{VCPU: cpuUpperBound, Mem: memUpperBound}
 	}
 }
 
