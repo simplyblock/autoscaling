@@ -5,7 +5,6 @@ commands:
     user: root
     sysvInitAction: sysinit
     shell: '/usr/sbin/cgconfigparser -l /etc/cgconfig.conf -s 1664'
-  # containerd + load-image REMOVED – we don't use a daemon or ctr anymore
   - name: vm-monitor
     user: vm-monitor
     sysvInitAction: respawn
@@ -18,10 +17,10 @@ commands:
     user: root
     sysvInitAction: respawn
     shell: 'cat /tmp/neon-logs.fifo > /dev/virtio-ports/tech.neon.log.0'
-  - name: run-postgres
-    user: root
-    sysvInitAction: respawn
-    shell: '/usr/local/bin/run-postgres-runc.sh'
+  # - name: run-postgres
+  #   user: root
+  #   sysvInitAction: respawn
+  #   shell: '/usr/local/bin/run-postgres-runc.sh'
 
 files:
   - filename: pg_hba.conf
