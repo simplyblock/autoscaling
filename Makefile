@@ -548,6 +548,18 @@ k3d-load: k3d # Push docker images to the k3d cluster.
 .PHONY: vm-examples
 vm-examples: vm-postgres pg16-disk-test ## Build example VM images
 
+.PHONY: vm-examples
+vela-image: bin/vm-builder ## Build example VM images
+	./bin/vm-builder \
+		-src alpine:$(ALPINE_IMG_TAG)$(ALPINE_IMG_SHA) \
+		-dst vela-img:latest \
+		-build-arg ALPINE_IMG_TAG=$(ALPINE_IMG_TAG) \
+		-build-arg ALPINE_IMG_SHA=$(ALPINE_IMG_SHA) \
+		-build-arg RUST_IMG_TAG=$(RUST_IMG_TAG) \
+		-build-arg RUST_IMG_SHA=$(RUST_IMG_SHA) \
+		-target-arch linux/$(TARGET_ARCH) \
+		-spec vm-examples/vela/image-spec.yaml
+
 .PHONY: vm-postgres
 vm-postgres: docker-build-vm-postgres load-vm-postgres
 
