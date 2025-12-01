@@ -181,6 +181,7 @@ func TestReconcile(t *testing.T) {
 	var origWithModifiedFields vmv1.VirtualMachine
 	origVM.DeepCopy().DeepCopyInto(&origWithModifiedFields)
 	origWithModifiedFields.Spec.CpuScalingMode = lo.ToPtr(vmv1.CpuScalingModeQMP)
+	origWithModifiedFields.Spec.PowerState = vmv1.PowerStateRunning
 	assert.Equal(t, vm.Spec, origWithModifiedFields.Spec)
 
 	// Round 4
