@@ -5,12 +5,6 @@ on:
     branches:
       - main
 
-env:
-  BUCKET: neon-github-public-dev
-  BUCKET_PATH: autoscaling/code-coverage
-  REPORT_PREFIX: https://neon-github-public-dev.s3.amazonaws.com/autoscaling/code-coverage
-
-
 permissions:
   contents: read
 
@@ -33,16 +27,14 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
-        with:
-          aws-region: us-east-2
-          role-to-assume: arn:aws:iam::369495373322:role/gha-oidc-s3-rw
-      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6.1.0
         with:
           go-version-file: 'go.mod'
-      - uses: tj-actions/changed-files@c65cd883420fd2eb864698a825fc4162dd94482c # v44.5.7
+          go-version: '1.25'
+
+      - uses: tj-actions/changed-files@v47.0.0
         id: changed-files
         with:
           files: |
@@ -51,33 +43,29 @@ jobs:
             "!test/"
             go.mod
             go.sum
+
       # run tests on PR only if there are code changes and always on main
       - name: Run Go Tests
         if: ${{ steps.changed-files.outputs.any_changed == 'true' && github.event_name == 'pull_request' || github.ref_name == 'main' }}
         run: |
           make test
+
       - name: Archive code coverage results
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        uses: actions/upload-artifact@v5.0.0
         if: ${{ !cancelled() && (steps.changed-files.outputs.any_changed == 'true' && github.event_name == 'pull_request' || github.ref_name == 'main') }}
         with:
           name: code-coverage
           path: cover.out
-      - name: Upload html coverage report
-        id: html-artifact
-        env:
-          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        if: ${{ !cancelled() && (steps.changed-files.outputs.any_changed == 'true' && github.event_name == 'pull_request') }}
-        run: |
-          aws s3 cp cover.html "s3://${BUCKET}/${BUCKET_PATH}/${COMMIT_SHA}/index.html"
+
       - name: "Code coverage report"
-        uses: fgrosse/go-coverage-report@8c1d1a09864211d258937b1b1a5b849f7e4f2682 # v1.2.0
+        uses: fgrosse/go-coverage-report@v1.2.0
         if: ${{ !cancelled() && (steps.changed-files.outputs.any_changed == 'true' && github.event_name == 'pull_request' && github.event.base_ref == 'main') }}
         with:
           coverage-artifact-name: "code-coverage"
           coverage-file-name: "cover.out"
 
       - name: Create comment with html report
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        uses: actions/github-script@v8.0.0
         if: ${{ !cancelled() && (steps.changed-files.outputs.any_changed == 'true' && github.event_name == 'pull_request') }}
         env:
           COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

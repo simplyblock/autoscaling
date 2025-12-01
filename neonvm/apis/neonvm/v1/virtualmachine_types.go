@@ -491,7 +491,7 @@ type MemorySlots struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=512
 	// +kubebuilder:validation:ExclusiveMaximum=false
-	// +kubebuilder:default:=0
+	// +kubebuilder:default:=1
 	Limit int32 `json:"limit"`
 }
 

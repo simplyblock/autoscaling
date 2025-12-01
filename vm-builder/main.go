@@ -20,8 +20,9 @@ import (
 	cliconfig "github.com/docker/cli/cli/config"
 	dockercontext "github.com/docker/cli/cli/context"
 	contextstore "github.com/docker/cli/cli/context/store"
-	"github.com/docker/docker/api/types"
+	build "github.com/docker/docker/api/types/build"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/client"
@@ -264,7 +265,13 @@ func main() {
 
 	hostContainsSrcImage := false
 	if !*forcePull {
-		hostImages, err := cli.ImageList(ctx, image.ListOptions{})
+		hostImages, err := cli.ImageList(ctx, image.ListOptions{
+			All:            false,
+			Filters:        filters.Args{},
+			SharedSize:     false,
+			ContainerCount: false,
+			Manifests:      false,
+		})
 		if err != nil {
 			log.Fatalln(err) //nolint:gocritic // linter complains that Fatalln circumvents deferred cli.Close(). Too much work to fix in #721, leaving for later.
 		}
@@ -292,7 +299,12 @@ func main() {
 			}
 			reg := reference.Domain(named)
 
-			imagePullOptions := image.PullOptions{}
+			imagePullOptions := image.PullOptions{
+				All:           false,
+				RegistryAuth:  "",
+				PrivilegeFunc: nil,
+				Platform:      "",
+			}
 			if authConfig, ok := authConfigs[reg]; ok {
 				encoded, err := registry.EncodeAuthConfig(authConfig)
 				if err != nil {
@@ -334,7 +346,7 @@ func main() {
 	}
 
 	log.Printf("Build docker image for virtual machine (disk size %s): %s\n", *size, dstIm)
-	imageSpec, _, err := cli.ImageInspectWithRaw(ctx, *srcImage)
+	imageSpec, err := cli.ImageInspect(ctx, *srcImage)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -454,17 +466,41 @@ func main() {
 		finalBuildArgs[kv[0]] = &kv[1]
 	}
 
-	opt := types.ImageBuildOptions{
-		AuthConfigs:    authConfigs,
+	opt := build.ImageBuildOptions{
 		Tags:           []string{dstIm},
-		BuildArgs:      finalBuildArgs,
 		SuppressOutput: *quiet,
+		RemoteContext:  "",
 		NoCache:        false,
-		Context:        tarBuffer,
-		Dockerfile:     "Dockerfile",
 		Remove:         true,
 		ForceRemove:    true,
+		PullParent:     false,
+		Isolation:      "",
+		CPUSetCPUs:     "",
+		CPUSetMems:     "",
+		CPUShares:      0,
+		CPUQuota:       0,
+		CPUPeriod:      0,
+		Memory:         0,
+		MemorySwap:     0,
+		CgroupParent:   "",
+		NetworkMode:    "",
+		ShmSize:        0,
+		Dockerfile:     "Dockerfile",
+		Ulimits:        nil,
+		BuildArgs:      finalBuildArgs,
+		AuthConfigs:    authConfigs,
+		Context:        tarBuffer,
+		Labels:         nil,
+		Squash:         false,
+		CacheFrom:      nil,
+		SecurityOpt:    nil,
+		ExtraHosts:     nil,
+		Target:         "",
+		SessionID:      "",
 		Platform:       *targetArch,
+		Version:        "",
+		BuildID:        "",
+		Outputs:        nil,
 	}
 	buildResp, err := cli.ImageBuild(ctx, tarBuffer, opt)
 	if err != nil {
