@@ -23,8 +23,9 @@ for i in ${ETH_LIST}; do
     udhcpc -t 1 -T 1 -A 1 -b -q -i $iface -O 121 -O 119
 done
 
-# postgresql init and start
 export PGDATA=/var/lib/postgresql
+
+# postgresql init and start
 su-exec postgres pg_ctl start -o '-c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/postgresql/pg_hba.conf'
 
 echo -e "\nBoot took $(cut -d' ' -f1 /proc/uptime) seconds\n"

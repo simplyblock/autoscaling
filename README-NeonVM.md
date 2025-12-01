@@ -29,15 +29,59 @@ cat <<EOF | kubectl apply -f -
 apiVersion: vm.neon.tech/v1
 kind: VirtualMachine
 metadata:
-  name: vm-debian
+  name: vm-manohar-dev
 spec:
+  powerState: Running
   guest:
     rootDisk:
-      image: neondatabase/vm-debian:11
-    cpus: { min: 1, use: 1, max: 1 }
-    memorySlots: { min: 1, use: 1, max: 1 }
+      image: docker.io/manoharbrm/pg16-test:dev9
+    cpus: { min: 1, use: 1, max: 64 }
+    memorySlots: { min: 1, use: 2, max: 256 }
+    memorySlotSize: 512Mi
+  disks:
+    - name: data
+      mountPath: /var/lib/postgresql/data
+      blockDevice:
+        persistentVolumeClaim:
+          claimName: my-existing-data-pvc
 EOF
 ```
+
+### Attaching PVC-backed block disks
+
+Add a disk entry with `blockDevice` under `spec.disks` to provision a PersistentVolumeClaim-backed disk. NeonVM attaches the PVC to the runner Pod, ensures it has an ext4 filesystem (creating one if the device is empty), labels it with the disk name, and mounts it inside the guest at the requested `mountPath`. For example:
+
+```yaml
+spec:
+  disks:
+    - name: data
+      mountPath: /var/lib/postgresql
+      blockDevice:
+        persistentVolumeClaim:
+          storageClassName: simplyblock-csi-sc
+          accessModes: [ReadWriteMany]
+          resources:
+            requests:
+              storage: 100Gi
+```
+
+Because the filesystem lives on the PVC, the contents survive VM restarts without any guest-side bootstrapping.
+
+PVC expansions are detected automatically. Once the underlying claim grows, NeonVM resizes the attached virtio disk and runs `resize2fs` inside the guest so the filesystem fills the new space without manual intervention.
+
+To reuse a PVC managed outside the VM definition, provide a claim name instead of provisioning details:
+
+```yaml
+spec:
+  disks:
+    - name: data
+      mountPath: /var/lib/postgresql
+      blockDevice:
+        persistentVolumeClaim:
+          claimName: my-existing-data-pvc
+```
+
+When `claimName` is set, NeonVM skips creating the PVC and simply attaches the existing volume to the VM.
 
 ### Check virtual machine running
 
@@ -282,4 +326,3 @@ which provides a reconcile function responsible for synchronizing resources unti
 - [x] Live migration CRDs
 - [x] Simplify VM disk image creation from any docker image
 - [ ] ARM64 support
-

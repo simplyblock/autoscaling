@@ -53,6 +53,16 @@ type VirtualMachineMigrationSpec struct {
 	// +kubebuilder:default:=true
 	Incremental bool `json:"incremental"`
 
+	// Trigger block disk copy migration by default
+	// +optional
+	// +kubebuilder:default:=true
+	BlockMigration *bool `json:"blockMigration,omitempty"`
+
+	// Skip disk copy migration
+	// +optional
+	// +kubebuilder:default:=true
+	SkipDiskMigration bool `json:"skipDiskMigration,omitempty"`
+
 	// Use PostCopy migration by default
 	// +optional
 	// +kubebuilder:default:=false

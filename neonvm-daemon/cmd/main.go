@@ -8,8 +8,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,6 +44,7 @@ func main() {
 		cpuOperationsMutex:  &sync.Mutex{},
 		cpuScaler:           cpuscaling.NewCPUScaler(),
 		fileOperationsMutex: &sync.Mutex{},
+		diskOperationsMutex: &sync.Mutex{},
 		logger:              logger.Named("cpu-srv"),
 	}
 	srv.run(*addr)
@@ -53,6 +56,7 @@ type cpuServer struct {
 	cpuOperationsMutex  *sync.Mutex
 	cpuScaler           *cpuscaling.CPUScaler
 	fileOperationsMutex *sync.Mutex
+	diskOperationsMutex *sync.Mutex
 	logger              *zap.Logger
 }
 
@@ -193,6 +197,49 @@ func (s *cpuServer) handleUploadFile(w http.ResponseWriter, r *http.Request, pat
 	w.WriteHeader(http.StatusOK)
 }
 
+func (s *cpuServer) handleDiskResize(w http.ResponseWriter, r *http.Request, label string) {
+	s.diskOperationsMutex.Lock()
+	defer s.diskOperationsMutex.Unlock()
+
+	if err := r.Context().Err(); err != nil {
+		w.WriteHeader(http.StatusRequestTimeout)
+		return
+	}
+
+	if err := resizeFilesystemForLabel(label); err != nil {
+		s.logger.Error("failed to resize filesystem", zap.String("disk", label), zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func resizeFilesystemForLabel(label string) error {
+	device, err := devicePathForLabel(label)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command("/neonvm/bin/resize2fs", device)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func devicePathForLabel(label string) (string, error) {
+	cmd := exec.Command("/neonvm/bin/blkid", "-L", label)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	path := strings.TrimSpace(string(output))
+	if path == "" {
+		return "", fmt.Errorf("blkid returned empty path for label %q", label)
+	}
+	return path, nil
+}
+
 func (s *cpuServer) run(addr string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/cpu", func(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +269,14 @@ func (s *cpuServer) run(addr string) {
 			// unknown method
 			w.WriteHeader(http.StatusNotFound)
 		}
+	})
+	mux.HandleFunc("/disks/{label}/resize", func(w http.ResponseWriter, r *http.Request) {
+		label := r.PathValue("label")
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleDiskResize(w, r, label)
 	})
 
 	timeout := 5 * time.Second

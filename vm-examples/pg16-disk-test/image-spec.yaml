@@ -8,7 +8,7 @@ commands:
   - name: postgres-data
     user: root
     sysvInitAction: sysinit
-    shell: 'mkdir -p /run/postgresql && chown -R postgres:postgres /run/postgresql'
+    shell: 'PGDATA=/var/lib/postgresql/data; mkdir -p $PGDATA /run/postgresql && chown -R postgres:postgres $PGDATA /run/postgresql && [ -s "$PGDATA/PG_VERSION" ] || su-exec postgres sh -c "PGDATA=$PGDATA pg_ctl init"'
   - name: vm-monitor
     user: vm-monitor
     sysvInitAction: respawn
@@ -24,7 +24,7 @@ commands:
   - name: start-postgres
     user: postgres
     sysvInitAction: once
-    shell: 'PGDATA=/var/lib/postgresql pg_ctl start -o "-c config_file=/etc/postgresql.conf -c hba_file=/etc/pg_hba.conf" -l /tmp/neon-logs.fifo'
+    shell: 'PGDATA=/var/lib/postgresql/data pg_ctl start -o "-c config_file=/etc/postgresql.conf -c hba_file=/etc/pg_hba.conf" -l /tmp/neon-logs.fifo'
 files:
   - filename: postgresql.conf
     hostPath: postgresql.conf
@@ -69,6 +69,8 @@ build: |
       && gcc -g -O allocate-loop.c -o /bin/allocate-loop
 
 merge: |
+  ENV PGDATA=/var/lib/postgresql/data
+
   RUN adduser vm-monitor --disabled-password --no-create-home
 
   COPY cgconfig.conf         /etc/cgconfig.conf
@@ -88,13 +90,6 @@ merge: |
         && apk add --no-cache \
                 su-exec \
                 postgresql16
-
-  # Initialize postgres
-  ENV PGDATA=/var/lib/postgresql
-  RUN set -e \
-      && mkdir -p ${PGDATA} /run/postgresql \
-      && chown -R postgres:postgres ${PGDATA} /run/postgresql \
-      && su-exec postgres pg_ctl init
 
   COPY --from=allocate-loop-builder /bin/allocate-loop        /bin/allocate-loop
   COPY --from=monitor-builder       /workspace/bin/vm-monitor /bin/vm-monitor

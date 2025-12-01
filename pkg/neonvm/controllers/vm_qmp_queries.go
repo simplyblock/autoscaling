@@ -432,6 +432,19 @@ func QmpStartMigration(virtualmachine *vmv1.VirtualMachine, virtualmachinemigrat
 	}
 
 	// trigger migration
+	// check if block migration requested
+	blk := !virtualmachinemigration.Spec.Incremental
+	if virtualmachinemigration.Spec.BlockMigration != nil && !*virtualmachinemigration.Spec.BlockMigration {
+		blk = false
+	}
+	inc := virtualmachinemigration.Spec.Incremental
+	if !blk {
+		inc = false
+	}
+	if virtualmachinemigration.Spec.SkipDiskMigration {
+		blk = false
+		inc = false
+	}
 	qmpcmd = []byte(fmt.Sprintf(`{
 		"execute": "migrate",
 		"arguments":
@@ -440,7 +453,7 @@ func QmpStartMigration(virtualmachine *vmv1.VirtualMachine, virtualmachinemigrat
 			"inc": %t,
 			"blk": %t
 		    }
-		}`, t_ip, vmv1.MigrationPort, virtualmachinemigration.Spec.Incremental, !virtualmachinemigration.Spec.Incremental))
+		}`, t_ip, vmv1.MigrationPort, inc, blk))
 	_, err = smon.Run(qmpcmd)
 	if err != nil {
 		return err
@@ -501,6 +514,27 @@ func QmpQuit(ip string, port int32) error {
 	defer mon.Disconnect() //nolint:errcheck // nothing to do with error when deferred. TODO: log it?
 
 	qmpcmd := []byte(`{"execute": "quit"}`)
+	_, err = mon.Run(qmpcmd)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func QmpSystemPowerdown(vm *vmv1.VirtualMachine) error {
+	ip, port := QmpAddr(vm)
+	if ip == "" {
+		return fmt.Errorf("cannot power down VM without pod IP")
+	}
+
+	mon, err := QmpConnect(ip, port)
+	if err != nil {
+		return err
+	}
+	defer mon.Disconnect() //nolint:errcheck // nothing to do with error when deferred. TODO: log it?
+
+	qmpcmd := []byte(`{"execute": "system_powerdown"}`)
 	_, err = mon.Run(qmpcmd)
 	if err != nil {
 		return err

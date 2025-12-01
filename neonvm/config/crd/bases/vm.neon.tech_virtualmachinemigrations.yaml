@@ -73,6 +73,10 @@ spec:
                 default: true
                 description: Use Auto converge by default
                 type: boolean
+              blockMigration:
+                default: true
+                description: Trigger block disk copy migration by default
+                type: boolean
               completionTimeout:
                 default: 3600
                 description: Set 1 hour as default timeout for migration
@@ -296,6 +300,10 @@ spec:
                 type: object
               preventMigrationToSameHost:
                 default: true
+                type: boolean
+              skipDiskMigration:
+                default: true
+                description: Skip disk copy migration
                 type: boolean
               vmName:
                 minLength: 1

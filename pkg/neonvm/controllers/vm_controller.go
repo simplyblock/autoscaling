@@ -89,6 +89,7 @@ type VMReconciler struct {
 //+kubebuilder:rbac:groups=vm.neon.tech,resources=virtualmachines/finalizers,verbs=update
 //+kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 //+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=pods/status,verbs=get;list;watch
 //+kubebuilder:rbac:groups=vm.neon.tech,resources=ippools,verbs=get;list;watch;create;update;patch;delete
@@ -173,6 +174,11 @@ func (r *VMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Re
 		if vm.Spec.CpuScalingMode == nil {
 			log.Info("Setting default CPU scaling mode", "default", r.Config.DefaultCPUScalingMode)
 			vm.Spec.CpuScalingMode = lo.ToPtr(r.Config.DefaultCPUScalingMode)
+			changed = true
+		}
+
+		if vm.Spec.PowerState == "" {
+			vm.Spec.PowerState = vmv1.PowerStateRunning
 			changed = true
 		}
 
@@ -340,6 +346,12 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		}
 	}
 
+	powerState := vm.Spec.PowerState
+	if powerState == "" {
+		powerState = vmv1.PowerStateRunning
+	}
+	wantRunning := powerState == vmv1.PowerStateRunning
+
 	switch vm.Status.Phase {
 
 	case "":
@@ -354,6 +366,36 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		// VirtualMachine just created, change Phase to "Pending"
 		vm.Status.Phase = vmv1.VmPending
 	case vmv1.VmPending:
+		if !wantRunning {
+			if vm.Status.PodName != "" {
+				vmRunner := &corev1.Pod{}
+				err := r.Get(ctx, types.NamespacedName{Name: vm.Status.PodName, Namespace: vm.Namespace}, vmRunner)
+				if err != nil && !apierrors.IsNotFound(err) {
+					log.Error(err, "Failed to get vm-runner Pod")
+					return err
+				}
+				if err == nil {
+					switch runnerStatus(vmRunner) {
+					case runnerRunning:
+						if err := r.requestRunnerShutdown(ctx, vm, vmRunner); err != nil {
+							return err
+						}
+					default:
+						if vmRunner.DeletionTimestamp == nil {
+							log.Info("Deleting runner Pod because powerState=Stopped", "Pod.Namespace", vmRunner.Namespace, "Pod.Name", vmRunner.Name)
+							if err := r.Delete(ctx, vmRunner); err != nil && !apierrors.IsNotFound(err) {
+								return err
+							}
+						}
+					}
+					setVMStoppedCondition(vm)
+					return nil
+				}
+			}
+			setVMStoppedCondition(vm)
+			return nil
+		}
+
 		// Generate runner pod name and set desired memory provider.
 		if len(vm.Status.PodName) == 0 {
 			vm.Status.PodName = names.SimpleNameGenerator.GenerateName(fmt.Sprintf("%s-", vm.Name))
@@ -398,6 +440,11 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 					log.Error(err, "Failed to get SSH Secret")
 					return err
 				}
+			}
+
+			if err := r.ensureBlockDevicePVCs(ctx, vm); err != nil {
+				log.Error(err, "Failed to ensure block device PVCs")
+				return err
 			}
 
 			// Define a new pod
@@ -500,9 +547,18 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 			log.Error(err, "Failed to sync pod labels and annotations", "VirtualMachine", vm.Name)
 		}
 
+		status := runnerStatus(vmRunner)
+
 		// runner pod found, check/update phase now
-		switch runnerStatus(vmRunner) {
+		switch status {
 		case runnerRunning:
+			if !wantRunning {
+				if err := r.requestRunnerShutdown(ctx, vm, vmRunner); err != nil {
+					return err
+				}
+				setVMStoppedCondition(vm)
+				return nil
+			}
 			// update status by IP of runner pod
 			vm.Status.PodIP = vmRunner.Status.PodIP
 			// update phase
@@ -573,6 +629,18 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 					"Memory in spec", memorySizeFromSpec)
 				vm.Status.Phase = vmv1.VmScaling
 			}
+		case runnerPending:
+			if !wantRunning {
+				if vmRunner.DeletionTimestamp == nil {
+					log.Info("Deleting runner Pod because powerState=Stopped", "Pod.Namespace", vmRunner.Namespace, "Pod.Name", vmRunner.Name)
+					if err := r.Delete(ctx, vmRunner); err != nil && !apierrors.IsNotFound(err) {
+						return err
+					}
+				}
+				setVMStoppedCondition(vm)
+				return nil
+			}
+			// do nothing otherwise
 		case runnerSucceeded:
 			vm.Status.Phase = vmv1.VmSucceeded
 			meta.SetStatusCondition(&vm.Status.Conditions,
@@ -619,6 +687,14 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		// will be correctly set even if the rest of the reconcile operation fails.
 		if err := updatePodMetadataIfNecessary(ctx, r.Client, vm, vmRunner); err != nil {
 			log.Error(err, "Failed to sync pod labels and annotations", "VirtualMachine", vm.Name)
+		}
+
+		if !wantRunning {
+			if err := r.requestRunnerShutdown(ctx, vm, vmRunner); err != nil {
+				return err
+			}
+			setVMStoppedCondition(vm)
+			return nil
 		}
 
 		// runner pod found, check that it's still up:
@@ -711,18 +787,24 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		//
 		// However, this opens up a possibility for cascading failures where the pods would be constantly
 		// recreated, and then stuck deleting. That's why we have AtMostOnePod.
+		if !wantRunning {
+			setVMStoppedCondition(vm)
+		}
+
 		if !r.Config.AtMostOnePod || apierrors.IsNotFound(err) {
 			// NB: Cleanup() leaves status .Phase and .RestartCount (+ some others) but unsets other fields.
 			vm.Cleanup()
 
 			var shouldRestart bool
-			switch vm.Spec.RestartPolicy {
-			case vmv1.RestartPolicyAlways:
-				shouldRestart = true
-			case vmv1.RestartPolicyOnFailure:
-				shouldRestart = vm.Status.Phase == vmv1.VmFailed
-			case vmv1.RestartPolicyNever:
-				shouldRestart = false
+			if wantRunning {
+				switch vm.Spec.RestartPolicy {
+				case vmv1.RestartPolicyAlways:
+					shouldRestart = true
+				case vmv1.RestartPolicyOnFailure:
+					shouldRestart = vm.Status.Phase == vmv1.VmFailed
+				case vmv1.RestartPolicyNever:
+					shouldRestart = false
+				}
 			}
 
 			if shouldRestart {
@@ -730,6 +812,8 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 				vm.Status.Phase = vmv1.VmPending // reset to trigger restart
 				vm.Status.RestartCount += 1      // increment restart count
 				r.Metrics.vmRestartCounts.Inc()
+			} else if !wantRunning {
+				setVMStoppedCondition(vm)
 			}
 
 			// TODO for RestartPolicyNever: implement TTL or do nothing
@@ -757,6 +841,16 @@ func propagateRevision(vm *vmv1.VirtualMachine) {
 	}
 	rev := vm.Spec.TargetRevision.WithTime(time.Now())
 	vm.Status.CurrentRevision = &rev
+}
+
+func setVMStoppedCondition(vm *vmv1.VirtualMachine) {
+	meta.SetStatusCondition(&vm.Status.Conditions,
+		metav1.Condition{
+			Type:    typeAvailableVirtualMachine,
+			Status:  metav1.ConditionFalse,
+			Reason:  "PowerStateStopped",
+			Message: "VirtualMachine stopped as requested by spec.powerState",
+		})
 }
 
 func (r *VMReconciler) doVirtioMemScaling(
@@ -794,6 +888,33 @@ func (r *VMReconciler) doVirtioMemScaling(
 	done = currentTotalSize.Value() == goalTotalSize.Value()
 	r.updateVMStatusMemory(ctx, vm, currentTotalSize)
 	return done, nil
+}
+
+func (r *VMReconciler) requestRunnerShutdown(
+	ctx context.Context,
+	vm *vmv1.VirtualMachine,
+	vmRunner *corev1.Pod,
+) error {
+	logger := log.FromContext(ctx)
+
+	if vm.Status.PodIP == "" {
+		logger.Info("VM runner has no pod IP yet, deleting pod to stop it", "VirtualMachine", vm.Name, "Pod", vmRunner.Name)
+		return client.IgnoreNotFound(r.Delete(ctx, vmRunner))
+	}
+
+	ip, _ := QmpAddr(vm)
+	if ip == "" {
+		logger.Info("VM runner IP is empty, deleting pod to stop it", "VirtualMachine", vm.Name, "Pod", vmRunner.Name)
+		return client.IgnoreNotFound(r.Delete(ctx, vmRunner))
+	}
+
+	logger.Info("Requesting VM shutdown via QMP", "VirtualMachine", vm.Name, "Pod", vmRunner.Name)
+	if err := QmpSystemPowerdown(vm); err != nil {
+		logger.Error(err, "Failed to request VM shutdown via QMP, deleting pod instead", "VirtualMachine", vm.Name, "Pod", vmRunner.Name)
+		return client.IgnoreNotFound(r.Delete(ctx, vmRunner))
+	}
+
+	return nil
 }
 
 type runnerStatusKind string
@@ -1021,6 +1142,126 @@ func extractVirtualMachineOvercommitSettingsJSON(spec vmv1.VirtualMachineSpec) *
 }
 
 // podForVirtualMachine returns a VirtualMachine Pod object
+func (r *VMReconciler) ensureBlockDevicePVCs(ctx context.Context, vm *vmv1.VirtualMachine) error {
+	logger := log.FromContext(ctx)
+
+	for _, disk := range vm.Spec.Disks {
+		if disk.BlockDevice == nil {
+			continue
+		}
+		device := disk.BlockDevice
+		if device.ExistingClaimName != "" {
+			if device.PersistentVolumeClaim != nil {
+				return fmt.Errorf("disk %q cannot set both blockDevice.existingClaimName and blockDevice.persistentVolumeClaim", disk.Name)
+			}
+			continue
+		}
+		if device.PersistentVolumeClaim == nil {
+			return fmt.Errorf("disk %q requires blockDevice.persistentVolumeClaim when blockDevice.existingClaimName is empty", disk.Name)
+		}
+		pvcSpec := device.PersistentVolumeClaim
+		if pvcSpec.ClaimName != "" {
+			if pvcHasProvisioningFields(*pvcSpec) {
+				return fmt.Errorf("disk %q cannot set blockDevice.persistentVolumeClaim.claimName together with storageClassName, accessModes, or resources", disk.Name)
+			}
+			continue
+		}
+		if !pvcHasStorageRequest(pvcSpec.Resources) {
+			return fmt.Errorf("disk %q requires blockDevice.persistentVolumeClaim.resources.requests.storage when claimName is empty", disk.Name)
+		}
+
+		nn := types.NamespacedName{
+			Name:      blockDevicePVCName(vm, disk),
+			Namespace: vm.Namespace,
+		}
+
+		current := &corev1.PersistentVolumeClaim{}
+		if err := r.Get(ctx, nn, current); err == nil {
+			continue
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
+
+		pvc := &corev1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      nn.Name,
+				Namespace: nn.Namespace,
+				Labels:    labelsForVirtualMachine(vm),
+			},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: getBlockAccessModes(device.PersistentVolumeClaim.AccessModes),
+				VolumeMode:  lo.ToPtr(corev1.PersistentVolumeBlock),
+			},
+		}
+		if pvcSpec.StorageClassName != nil {
+			pvc.Spec.StorageClassName = lo.ToPtr(*pvcSpec.StorageClassName)
+		}
+		var resources corev1.VolumeResourceRequirements
+		pvcSpec.Resources.DeepCopyInto(&resources)
+		pvc.Spec.Resources = resources
+
+		if err := ctrl.SetControllerReference(vm, pvc, r.Scheme); err != nil {
+			return err
+		}
+
+		logger.Info("Creating PVC for block device", "VirtualMachine", vm.Name, "Disk", disk.Name, "PVC", pvc.Name)
+		if err := r.Create(ctx, pvc); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func getBlockAccessModes(modes []corev1.PersistentVolumeAccessMode) []corev1.PersistentVolumeAccessMode {
+	if len(modes) == 0 {
+		return []corev1.PersistentVolumeAccessMode{corev1.ReadWriteMany}
+	}
+	out := make([]corev1.PersistentVolumeAccessMode, len(modes))
+	copy(out, modes)
+	return out
+}
+
+func pvcHasProvisioningFields(pvc vmv1.BlockPersistentVolumeClaim) bool {
+	return pvc.StorageClassName != nil || len(pvc.AccessModes) > 0 || !pvcResourcesEmpty(pvc.Resources)
+}
+
+func pvcHasStorageRequest(resources corev1.VolumeResourceRequirements) bool {
+	if resources.Requests == nil {
+		return false
+	}
+	request, ok := resources.Requests[corev1.ResourceStorage]
+	if !ok {
+		return false
+	}
+	return !request.IsZero()
+}
+
+func pvcResourcesEmpty(resources corev1.VolumeResourceRequirements) bool {
+	return len(resources.Requests) == 0 && len(resources.Limits) == 0
+}
+
+func blockDeviceClaimName(vm *vmv1.VirtualMachine, disk vmv1.Disk) string {
+	if disk.BlockDevice == nil {
+		return ""
+	}
+	if pvc := disk.BlockDevice.PersistentVolumeClaim; pvc != nil && pvc.ClaimName != "" {
+		return pvc.ClaimName
+	}
+	if disk.BlockDevice.ExistingClaimName != "" {
+		return disk.BlockDevice.ExistingClaimName
+	}
+	return blockDevicePVCName(vm, disk)
+}
+
+func blockDevicePVCName(vm *vmv1.VirtualMachine, disk vmv1.Disk) string {
+	return fmt.Sprintf("%s-block-%s", vm.Name, disk.Name)
+}
+
+func blockDeviceVolumeName(disk vmv1.Disk) string {
+	return fmt.Sprintf("block-%s", disk.Name)
+}
+
 func (r *VMReconciler) podForVirtualMachine(
 	vm *vmv1.VirtualMachine,
 	sshSecret *corev1.Secret,
@@ -1307,10 +1548,10 @@ func podSpec(
 					Image:           image,
 					Name:            "neonvm-runner",
 					ImagePullPolicy: corev1.PullIfNotPresent,
-					// Ensure restrictive context for the container
+					// Runner has to run privileged to manage VM devices directly.
 					// More info: https://kubernetes.io/docs/concepts/security/pod-security-standards/#restricted
 					SecurityContext: &corev1.SecurityContext{
-						Privileged: lo.ToPtr(false),
+						Privileged: lo.ToPtr(true),
 						Capabilities: &corev1.Capabilities{
 							Add: []corev1.Capability{
 								"NET_ADMIN",
@@ -1568,6 +1809,24 @@ func podSpec(
 		}
 
 		switch {
+		case disk.BlockDevice != nil:
+			claimName := blockDeviceClaimName(vm, disk)
+			volumeName := blockDeviceVolumeName(disk)
+			pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+				Name: volumeName,
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+						ClaimName: claimName,
+					},
+				},
+			})
+			pod.Spec.Containers[0].VolumeDevices = append(
+				pod.Spec.Containers[0].VolumeDevices,
+				corev1.VolumeDevice{
+					Name:       volumeName,
+					DevicePath: disk.BlockDevice.RunnerDevicePath(disk.Name),
+				},
+			)
 		case disk.ConfigMap != nil:
 			pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, mnt)
 			pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{

@@ -264,6 +264,29 @@ func (r *VirtualMachineMigrationReconciler) Reconcile(ctx context.Context, req c
 	switch migration.Status.Phase {
 
 	case vmv1.VmmPending:
+		if err := r.ensureBlockDevicesMigrationReady(ctx, vm); err != nil {
+			var blockErr *blockDeviceMigrationError
+			if errors.As(err, &blockErr) {
+				log.Error(err, "Block devices do not satisfy live migration requirements", "VirtualMachine", vm.Name)
+				if vm.Status.Phase == vmv1.VmPreMigrating {
+					vm.Status.Phase = vmv1.VmRunning
+					if err := r.Status().Update(ctx, vm); err != nil {
+						log.Error(err, "Failed to revert VM phase after block device validation failure")
+						return ctrl.Result{}, err
+					}
+				}
+				meta.SetStatusCondition(&migration.Status.Conditions,
+					metav1.Condition{
+						Type:    typeDegradedVirtualMachineMigration,
+						Status:  metav1.ConditionTrue,
+						Reason:  "BlockDevicesNotMigratable",
+						Message: blockErr.Error(),
+					})
+				migration.Status.Phase = vmv1.VmmFailed
+				return r.updateMigrationStatus(ctx, migration)
+			}
+			return ctrl.Result{}, err
+		}
 
 		// Check if the target runner pod already exists,
 		// if not create a new one using source pod as template
@@ -723,4 +746,52 @@ func (r *VirtualMachineMigrationReconciler) targetPodForVirtualMachine(
 	}
 
 	return pod, nil
+}
+
+type blockDeviceMigrationError struct {
+	message string
+}
+
+func (e *blockDeviceMigrationError) Error() string {
+	return e.message
+}
+
+func (r *VirtualMachineMigrationReconciler) ensureBlockDevicesMigrationReady(
+	ctx context.Context,
+	vm *vmv1.VirtualMachine,
+) error {
+	for _, disk := range vm.Spec.Disks {
+		if disk.BlockDevice == nil {
+			continue
+		}
+		claimName := blockDeviceClaimName(vm, disk)
+
+		pvc := &corev1.PersistentVolumeClaim{}
+		if err := r.Get(ctx, types.NamespacedName{Name: claimName, Namespace: vm.Namespace}, pvc); err != nil {
+			return err
+		}
+
+		if pvc.Spec.VolumeMode == nil || *pvc.Spec.VolumeMode != corev1.PersistentVolumeBlock {
+			return &blockDeviceMigrationError{
+				message: fmt.Sprintf("block device %q uses PVC %q without volumeMode=Block, cannot live migrate", disk.Name, claimName),
+			}
+		}
+
+		if !hasAccessMode(pvc.Spec.AccessModes, corev1.ReadWriteMany) {
+			return &blockDeviceMigrationError{
+				message: fmt.Sprintf("block device %q uses PVC %q without ReadWriteMany access mode, cannot live migrate", disk.Name, claimName),
+			}
+		}
+	}
+
+	return nil
+}
+
+func hasAccessMode(modes []corev1.PersistentVolumeAccessMode, expected corev1.PersistentVolumeAccessMode) bool {
+	for _, mode := range modes {
+		if mode == expected {
+			return true
+		}
+	}
+	return false
 }

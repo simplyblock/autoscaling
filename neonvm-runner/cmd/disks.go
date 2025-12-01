@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/alessio/shellescape"
@@ -31,6 +32,12 @@ const (
 	swapName = "swapdisk"
 )
 
+type blockDeviceRuntimeInfo struct {
+	Name       string
+	DevicePath string
+	Size       int64
+}
+
 // setupVMDisks creates the disks for the VM and returns the appropriate QEMU args
 func setupVMDisks(
 	logger *zap.Logger,
@@ -38,8 +45,9 @@ func setupVMDisks(
 	enableSSH bool,
 	swapSize *resource.Quantity,
 	extraDisks []vmv1.Disk,
-) ([]string, error) {
+) ([]string, []blockDeviceRuntimeInfo, error) {
 	var qemuCmd []string
+	var blockInfos []blockDeviceRuntimeInfo
 
 	qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=rootdisk,file=%s,if=virtio,media=disk,index=0,%s", rootDiskPath, diskCacheSettings))
 	qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=runtime,file=%s,if=virtio,media=cdrom,readonly=on,cache=none", runtimeDiskPath))
@@ -47,7 +55,7 @@ func setupVMDisks(
 	if enableSSH {
 		name := "ssh-authorized-keys"
 		if err := createISO9660FromPath(logger, name, sshAuthorizedKeysDiskPath, sshAuthorizedKeysMountPoint); err != nil {
-			return nil, fmt.Errorf("failed to create ISO9660 image: %w", err)
+			return nil, nil, fmt.Errorf("failed to create ISO9660 image: %w", err)
 		}
 		qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=%s,file=%s,if=virtio,media=cdrom,cache=none", name, sshAuthorizedKeysDiskPath))
 	}
@@ -56,18 +64,46 @@ func setupVMDisks(
 		dPath := fmt.Sprintf("%s/swapdisk.qcow2", mountedDiskPath)
 		logger.Info("creating QCOW2 image for swap", zap.String("diskPath", dPath))
 		if err := createSwap(dPath, swapSize); err != nil {
-			return nil, fmt.Errorf("failed to create swap disk: %w", err)
+			return nil, nil, fmt.Errorf("failed to create swap disk: %w", err)
 		}
 		qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=%s,file=%s,if=virtio,media=disk,%s,discard=unmap", swapName, dPath, diskCacheSettings))
 	}
 
 	for _, disk := range extraDisks {
 		switch {
+		case disk.BlockDevice != nil:
+			devicePath := disk.BlockDevice.RunnerDevicePath(disk.Name)
+			if _, err := os.Stat(devicePath); err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					logger.Warn("block device path not found", zap.String("disk", disk.Name), zap.String("devicePath", devicePath))
+				} else {
+					logger.Warn("failed to stat block device", zap.String("disk", disk.Name), zap.String("devicePath", devicePath), zap.Error(err))
+				}
+				continue
+			}
+			if err := ensureBlockDeviceReady(logger, disk.Name, devicePath); err != nil {
+				return nil, nil, fmt.Errorf("failed to prepare block device %s at %s: %w", disk.Name, devicePath, err)
+			}
+			size, err := blockDeviceSize(devicePath)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to read size for block device %s at %s: %w", disk.Name, devicePath, err)
+			}
+			blockInfos = append(blockInfos, blockDeviceRuntimeInfo{
+				Name:       disk.Name,
+				DevicePath: devicePath,
+				Size:       size,
+			})
+			logger.Info("attaching PVC-backed block device", zap.String("disk", disk.Name), zap.String("devicePath", devicePath))
+			qemuCmd = append(
+				qemuCmd,
+				"-drive",
+				fmt.Sprintf("id=%s,file=%s,if=virtio,format=raw,media=disk,cache=none", disk.Name, devicePath),
+			)
 		case disk.EmptyDisk != nil:
 			logger.Info("creating QCOW2 image with empty ext4 filesystem", zap.String("diskName", disk.Name))
 			dPath := fmt.Sprintf("%s/%s.qcow2", mountedDiskPath, disk.Name)
 			if err := createQCOW2(disk.Name, dPath, &disk.EmptyDisk.Size, nil); err != nil {
-				return nil, fmt.Errorf("failed to create QCOW2 image: %w", err)
+				return nil, nil, fmt.Errorf("failed to create QCOW2 image: %w", err)
 			}
 			discard := ""
 			if disk.EmptyDisk.Discard {
@@ -79,7 +115,7 @@ func setupVMDisks(
 			mnt := fmt.Sprintf("/vm/mounts%s", disk.MountPath)
 			logger.Info("creating iso9660 image", zap.String("diskPath", dPath), zap.String("diskName", disk.Name), zap.String("mountPath", mnt))
 			if err := createISO9660FromPath(logger, disk.Name, dPath, mnt); err != nil {
-				return nil, fmt.Errorf("failed to create ISO9660 image: %w", err)
+				return nil, nil, fmt.Errorf("failed to create ISO9660 image: %w", err)
 			}
 			qemuCmd = append(qemuCmd, "-drive", fmt.Sprintf("id=%s,file=%s,if=virtio,media=cdrom,cache=none", disk.Name, dPath))
 		default:
@@ -87,7 +123,7 @@ func setupVMDisks(
 		}
 	}
 
-	return qemuCmd, nil
+	return qemuCmd, blockInfos, nil
 }
 
 func resizeRootDisk(logger *zap.Logger, vmSpec *vmv1.VirtualMachineSpec) error {
@@ -192,6 +228,9 @@ func createISO9660runtime(
 				continue
 			}
 			switch {
+			case disk.BlockDevice != nil:
+				mounts = append(mounts, fmt.Sprintf(`/neonvm/bin/mount $(/neonvm/bin/blkid -L %s) %s`, disk.Name, disk.MountPath))
+				mounts = append(mounts, fmt.Sprintf(`/neonvm/bin/chmod 0777 %s`, disk.MountPath))
 			case disk.EmptyDisk != nil:
 				opts := ""
 				if disk.EmptyDisk.Discard {
@@ -338,6 +377,70 @@ func createSwap(diskPath string, swapSize *resource.Quantity) error {
 	}
 
 	return nil
+}
+
+func ensureBlockDeviceReady(logger *zap.Logger, diskName, devicePath string) error {
+	fsType, err := blockDeviceFilesystemType(devicePath)
+	if err != nil {
+		return err
+	}
+
+	switch fsType {
+	case "":
+		logger.Info("formatting PVC-backed block device as ext4", zap.String("disk", diskName))
+		if err := execFg("mkfs.ext4", "-F", "-L", diskName, devicePath); err != nil {
+			return err
+		}
+	case "ext4":
+		if err := execFg("tune2fs", "-L", diskName, devicePath); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported filesystem %q found on disk %s (expected ext4 or empty)", fsType, diskName)
+	}
+
+	return nil
+}
+
+func blockDeviceFilesystemType(devicePath string) (string, error) {
+	cmd := exec.Command("blkid", "-o", "value", "-s", "TYPE", devicePath)
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			return "", nil
+		}
+		return "", err
+	}
+	out := strings.TrimSpace(string(output))
+	if out == "" {
+		return "", nil
+	}
+
+	// cope with BusyBox-style blkid output. If blkid ignores -o value and prints
+	// the full descriptive line (/dev/... TYPE="ext4"), we now extract the filesystem
+	// type from the TYPE="…" token before falling back to the raw string.
+	// This keeps migrations from failing when blkid formats output unexpectedly.
+	if idx := strings.Index(out, `TYPE="`); idx != -1 {
+		rest := out[idx+len(`TYPE="`):]
+		if end := strings.Index(rest, `"`); end != -1 {
+			return rest[:end], nil
+		}
+	}
+
+	return out, nil
+}
+
+func blockDeviceSize(devicePath string) (int64, error) {
+	out, err := exec.Command("blockdev", "--getsize64", devicePath).Output()
+	if err != nil {
+		return 0, err
+	}
+	size, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return size, nil
 }
 
 func createQCOW2(diskName string, diskPath string, diskSize *resource.Quantity, contentPath *string) error {

@@ -172,6 +172,11 @@ type VirtualMachineSpec struct {
 	// +kubebuilder:default:=false
 	// +optional
 	EnableNetworkMonitoring *bool `json:"enableNetworkMonitoring,omitempty"`
+
+	// PowerState controls whether the VM runner pod should be running or stopped.
+	// +kubebuilder:default:=Running
+	// +optional
+	PowerState PowerState `json:"powerState,omitempty"`
 }
 
 type TLSProvisioning struct {
@@ -263,6 +268,14 @@ const (
 	RestartPolicyAlways    RestartPolicy = "Always"
 	RestartPolicyOnFailure RestartPolicy = "OnFailure"
 	RestartPolicyNever     RestartPolicy = "Never"
+)
+
+// +kubebuilder:validation:Enum=Running;Stopped
+type PowerState string
+
+const (
+	PowerStateRunning PowerState = "Running"
+	PowerStateStopped PowerState = "Stopped"
 )
 
 type Guest struct {
@@ -546,6 +559,8 @@ type Disk struct {
 type DiskSource struct {
 	// EmptyDisk represents a temporary empty qcow2 disk that shares a vm's lifetime.
 	EmptyDisk *EmptyDiskSource `json:"emptyDisk,omitempty"`
+	// BlockDevice represents a PersistentVolumeClaim-backed block device.
+	BlockDevice *BlockDeviceSource `json:"blockDevice,omitempty"`
 	// configMap represents a configMap that should populate this disk
 	// +optional
 	ConfigMap *corev1.ConfigMapVolumeSource `json:"configMap,omitempty"`
@@ -569,6 +584,44 @@ type EmptyDiskSource struct {
 
 type TmpfsDiskSource struct {
 	Size resource.Quantity `json:"size"`
+}
+
+const blockDeviceDefaultPathPrefix = "/dev/neonvm-block-"
+
+// BlockDeviceSource describes a PersistentVolumeClaim-backed block device attached to the VM.
+type BlockDeviceSource struct {
+	// Use an existing PersistentVolumeClaim instead of creating one.
+	// +optional
+	ExistingClaimName string `json:"existingClaimName,omitempty"`
+	// PersistentVolumeClaim specifies how to create a claim that backs this block device.
+	// Required if existingClaimName is empty.
+	// +optional
+	PersistentVolumeClaim *BlockPersistentVolumeClaim `json:"persistentVolumeClaim,omitempty"`
+}
+
+// BlockPersistentVolumeClaim describes a PVC to create for a block device attachment.
+type BlockPersistentVolumeClaim struct {
+	// ClaimName references an existing PersistentVolumeClaim to attach to the VM. When set, NeonVM will not create or manage the PVC.
+	// +optional
+	ClaimName string `json:"claimName,omitempty"`
+	// StorageClassName is the storage class used for the PVC.
+	// +optional
+	StorageClassName *string `json:"storageClassName,omitempty"`
+	// AccessModes defaults to ReadWriteMany if not specified. Live migration requires this mode.
+	// +optional
+	AccessModes []corev1.PersistentVolumeAccessMode `json:"accessModes,omitempty"`
+	// Resources defines the storage requests/limits for the PVC.
+	Resources corev1.VolumeResourceRequirements `json:"resources,omitempty"`
+}
+
+// RunnerDevicePath returns the path inside the runner Pod for this block device.
+func (b BlockDeviceSource) RunnerDevicePath(diskName string) string {
+	return BlockDeviceDevicePath(diskName)
+}
+
+// BlockDeviceDevicePath returns the default runner Pod device path for the given name.
+func BlockDeviceDevicePath(name string) string {
+	return fmt.Sprintf("%s%s", blockDeviceDefaultPathPrefix, name)
 }
 
 type ExtraNetwork struct {

@@ -18,6 +18,7 @@ RUN apk add --no-cache \
     curl \
     dnsmasq \
     e2fsprogs \
+    e2fsprogs-extra \
     iproute2 \
     iptables \
     jq \
