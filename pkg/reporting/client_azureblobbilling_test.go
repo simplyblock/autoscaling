@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -28,10 +29,24 @@ func startAzuriteContainer(version string) (*container, error) {
 	p := azurite.Preset(
 		azurite.WithVersion(version),
 	)
-	c, err := gnomock.Start(p, gnomock.WithHealthCheck(func(ctx context.Context, c *gnomock.Container) error {
-		_, err := net.Dial("tcp", fmt.Sprintf("%s:%d", realHostname(c.Host), c.Ports["blob"].Port))
-		return err
-	}), gnomock.WithTimeout(time.Minute))
+	c, err := gnomock.Start(p,
+		gnomock.WithHealthCheck(func(ctx context.Context, c *gnomock.Container) error {
+			_, err := net.Dial("tcp", net.JoinHostPort(realHostname(c.Host), strconv.Itoa(c.Ports["blob"].Port)))
+			return err
+		}),
+		gnomock.WithCommand(
+			"azurite",
+			"--blobHost", "0.0.0.0",
+			"--queueHost", "0.0.0.0",
+			"--tableHost", "0.0.0.0",
+			"--blobPort", "10000",
+			"--queuePort", "10001",
+			"--tablePort", "10002",
+			"--skipApiVersionCheck",
+		),
+		gnomock.WithEnv("AZURITE_SKIP_API_VERSION_CHECK=1"),
+		gnomock.WithTimeout(time.Minute),
+	)
 	if err != nil {
 		return nil, err
 	}

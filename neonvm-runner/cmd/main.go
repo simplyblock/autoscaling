@@ -251,10 +251,11 @@ func run(logger *zap.Logger) error {
 				Watch:     lo.ToPtr(true),
 				ReadOnly:  nil,
 				DiskSource: vmv1.DiskSource{
-					EmptyDisk: nil,
-					ConfigMap: nil,
-					Secret:    nil,
-					Tmpfs:     nil,
+					EmptyDisk:   nil,
+					BlockDevice: nil,
+					ConfigMap:   nil,
+					Secret:      nil,
+					Tmpfs:       nil,
 				},
 			})
 		}
@@ -1144,13 +1145,13 @@ func qmpResizeBlockDevice(device string, size int64) error {
 	if err != nil {
 		return err
 	}
-	defer mon.Disconnect() //nolint:errcheck
+	defer mon.Disconnect() //nolint:errcheck // best-effort cleanup
 
 	if err := mon.Connect(); err != nil {
 		return err
 	}
 
-	cmd := fmt.Sprintf(`{"execute":"block_resize","arguments":{"device":"%s","size":%d}}`, device, size)
+	cmd := fmt.Sprintf(`{"execute":"block_resize","arguments":{"device":%q,"size":%d}}`, device, size)
 	_, err = mon.Run([]byte(cmd))
 	return err
 }

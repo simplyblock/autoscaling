@@ -221,6 +221,7 @@ func Test_DesiredResourcesFromMetricsOrRequestedUpscaling(t *testing.T) {
 					Min:      1,
 					Use:      uint16(c.vmUsing.Mem / slotSize),
 					Max:      4,
+					Limit:    4,
 				},
 				// remaining fields are also unused:
 				Config: api.VmConfig{

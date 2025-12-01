@@ -334,12 +334,22 @@ func TestBlockDeviceWithClaimName(t *testing.T) {
 		{
 			Name:      "data",
 			MountPath: "/data",
+			ReadOnly:  nil,
+			Watch:     nil,
 			DiskSource: vmv1.DiskSource{
+				EmptyDisk: nil,
 				BlockDevice: &vmv1.BlockDeviceSource{
+					ExistingClaimName: "",
 					PersistentVolumeClaim: &vmv1.BlockPersistentVolumeClaim{
-						ClaimName: "external-data",
+						ClaimName:        "external-data",
+						StorageClassName: nil,
+						AccessModes:      nil,
+						Resources:        corev1.VolumeResourceRequirements{},
 					},
 				},
+				ConfigMap: nil,
+				Secret:    nil,
+				Tmpfs:     nil,
 			},
 		},
 	}
