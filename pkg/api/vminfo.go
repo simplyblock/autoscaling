@@ -114,6 +114,8 @@ type VmMemInfo struct {
 	Max uint16 `json:"max"`
 	// Use is the number of memory slots currently plugged in the VM
 	Use uint16 `json:"use"`
+	// Limit is the current soft limit of memory slots available
+	Limit uint16 `json:"limit"`
 
 	SlotSize Bytes `json:"slotSize"`
 }
@@ -123,6 +125,7 @@ func NewVmMemInfo(memSlots vmv1.MemorySlots, memSlotSize resource.Quantity) VmMe
 		Min:      uint16(memSlots.Min),
 		Max:      uint16(memSlots.Max),
 		Use:      uint16(memSlots.Use),
+		Limit:    uint16(memSlots.Limit),
 		SlotSize: Bytes(memSlotSize.Value()),
 	}
 }
@@ -173,6 +176,18 @@ func (vm VmInfo) Max() Resources {
 	return Resources{
 		VCPU: vm.Cpu.Max,
 		Mem:  vm.Mem.SlotSize * Bytes(vm.Mem.Max),
+	}
+}
+
+// Limiting returns the Resources that this VmInfo says the VM is currently allowed to use
+func (vm VmInfo) Limiting() Resources {
+	limit := vm.Mem.Limit
+	if limit == 0 {
+		limit = vm.Mem.Max
+	}
+	return Resources{
+		VCPU: vm.Cpu.Max,
+		Mem:  vm.Mem.SlotSize * Bytes(limit),
 	}
 }
 

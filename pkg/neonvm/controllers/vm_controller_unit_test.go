@@ -49,9 +49,10 @@ func defaultVm() *vmv1.VirtualMachine {
 					Use: vmv1.MilliCPU(1500),
 				},
 				MemorySlots: vmv1.MemorySlots{
-					Min: int32(1),
-					Max: int32(32),
-					Use: int32(2),
+					Min:   int32(1),
+					Max:   int32(32),
+					Limit: int32(32),
+					Use:   int32(2),
 				},
 				MemorySlotSize: resource.MustParse("1Gi"),
 			},

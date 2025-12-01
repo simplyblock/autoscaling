@@ -488,6 +488,11 @@ type MemorySlots struct {
 	// +kubebuilder:validation:Maximum=512
 	// +kubebuilder:validation:ExclusiveMaximum=false
 	Use int32 `json:"use"`
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=512
+	// +kubebuilder:validation:ExclusiveMaximum=false
+	// +kubebuilder:default:=0
+	Limit int32 `json:"limit"`
 }
 
 type RootDisk struct {
