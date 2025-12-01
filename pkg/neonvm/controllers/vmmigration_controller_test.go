@@ -266,9 +266,16 @@ func Test_VMM_FailsWhenBlockDeviceNotRWX(t *testing.T) {
 	vm.Spec.Disks = append(vm.Spec.Disks, vmv1.Disk{
 		Name:      "extra",
 		MountPath: "/data",
+		ReadOnly:  nil,
+		Watch:     nil,
 		DiskSource: vmv1.DiskSource{
+			EmptyDisk: nil,
 			BlockDevice: &vmv1.BlockDeviceSource{
+				ExistingClaimName: "",
 				PersistentVolumeClaim: &vmv1.BlockPersistentVolumeClaim{
+					ClaimName:        "",
+					StorageClassName: nil,
+					AccessModes:      nil,
 					Resources: corev1.VolumeResourceRequirements{
 						Requests: corev1.ResourceList{
 							corev1.ResourceStorage: resource.MustParse("1Gi"),
@@ -276,6 +283,9 @@ func Test_VMM_FailsWhenBlockDeviceNotRWX(t *testing.T) {
 					},
 				},
 			},
+			ConfigMap: nil,
+			Secret:    nil,
+			Tmpfs:     nil,
 		},
 	})
 	vm.Status.Phase = vmv1.VmRunning
@@ -326,5 +336,4 @@ func Test_VMM_FailsWhenBlockDeviceNotRWX(t *testing.T) {
 
 	params.refetchVM(vm)
 	require.Equal(t, vmv1.VmRunning, vm.Status.Phase)
-
 }

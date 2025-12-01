@@ -79,6 +79,7 @@ func CreateVmInfo(config InitialVmInfoConfig, opts ...VmInfoOpt) api.VmInfo {
 			Min:      config.MinCU * uint16(config.ComputeUnit.Mem/config.MemorySlotSize),
 			Use:      config.MinCU * uint16(config.ComputeUnit.Mem/config.MemorySlotSize),
 			Max:      config.MaxCU * uint16(config.ComputeUnit.Mem/config.MemorySlotSize),
+			Limit:    config.MaxCU * uint16(config.ComputeUnit.Mem/config.MemorySlotSize),
 		},
 		Config: api.VmConfig{
 			AutoMigrationEnabled: false,

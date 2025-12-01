@@ -181,6 +181,7 @@ func TestReconcile(t *testing.T) {
 	var origWithModifiedFields vmv1.VirtualMachine
 	origVM.DeepCopy().DeepCopyInto(&origWithModifiedFields)
 	origWithModifiedFields.Spec.CpuScalingMode = lo.ToPtr(vmv1.CpuScalingModeQMP)
+	origWithModifiedFields.Spec.PowerState = vmv1.PowerStateRunning
 	assert.Equal(t, vm.Spec, origWithModifiedFields.Spec)
 
 	// Round 4
@@ -334,12 +335,22 @@ func TestBlockDeviceWithClaimName(t *testing.T) {
 		{
 			Name:      "data",
 			MountPath: "/data",
+			ReadOnly:  nil,
+			Watch:     nil,
 			DiskSource: vmv1.DiskSource{
+				EmptyDisk: nil,
 				BlockDevice: &vmv1.BlockDeviceSource{
+					ExistingClaimName: "",
 					PersistentVolumeClaim: &vmv1.BlockPersistentVolumeClaim{
-						ClaimName: "external-data",
+						ClaimName:        "external-data",
+						StorageClassName: nil,
+						AccessModes:      nil,
+						Resources:        corev1.VolumeResourceRequirements{},
 					},
 				},
+				ConfigMap: nil,
+				Secret:    nil,
+				Tmpfs:     nil,
 			},
 		},
 	}

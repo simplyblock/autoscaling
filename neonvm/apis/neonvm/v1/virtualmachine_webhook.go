@@ -269,19 +269,19 @@ func validateDiskUpdate(before, after Disk) error {
 }
 
 func normalizeDiskForComparison(d Disk) Disk {
-	copy := d
+	normalized := d
 	if dc := d.DeepCopy(); dc != nil {
-		copy = *dc
+		normalized = *dc
 	}
 
-	if copy.BlockDevice != nil && copy.BlockDevice.PersistentVolumeClaim != nil {
-		requests := copy.BlockDevice.PersistentVolumeClaim.Resources.Requests
+	if normalized.BlockDevice != nil && normalized.BlockDevice.PersistentVolumeClaim != nil {
+		requests := normalized.BlockDevice.PersistentVolumeClaim.Resources.Requests
 		if len(requests) != 0 {
 			delete(requests, corev1.ResourceStorage)
 		}
 	}
 
-	return copy
+	return normalized
 }
 
 func pvcHasStorageRequest(resources corev1.VolumeResourceRequirements) bool {

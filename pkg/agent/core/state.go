@@ -495,11 +495,15 @@ func (s *state) calculateNeonVMAction(
 	}
 
 	// clamp desiredResources to what we're allowed to make a request for
+	var neonvmUpperBound *api.Resources
+	if desiredResources.HasFieldGreaterThan(s.VM.Using()) {
+		neonvmUpperBound = ptr(s.pluginApprovedUpperBound())
+	}
 	desiredResources = s.clampResources(
 		s.VM.Using(),                       // current: what we're using already
 		desiredResources,                   // target: desired resources
 		ptr(s.monitorApprovedLowerBound()), // lower bound: downscaling that the monitor has approved
-		ptr(s.pluginApprovedUpperBound()),  // upper bound: upscaling that the plugin has approved
+		neonvmUpperBound,                   // upper bound: upscaling that the plugin has approved
 	)
 
 	// If we're already using the desired resources, then no need to make a request

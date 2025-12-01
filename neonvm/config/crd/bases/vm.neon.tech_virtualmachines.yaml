@@ -2791,6 +2791,12 @@ spec:
                     x-kubernetes-int-or-string: true
                   memorySlots:
                     properties:
+                      limit:
+                        default: 1
+                        format: int32
+                        maximum: 512
+                        minimum: 1
+                        type: integer
                       max:
                         format: int32
                         maximum: 512
@@ -2807,6 +2813,7 @@ spec:
                         minimum: 1
                         type: integer
                     required:
+                    - limit
                     - max
                     - min
                     - use
