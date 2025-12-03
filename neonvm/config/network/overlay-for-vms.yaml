@@ -9,5 +9,16 @@ spec:
     "name": "overlay-for-vms",
     "type": "bridge",
     "bridge": "neon-br0",
-    "ipam": {}
+    "ipam": {
+      "type": "whereabouts",
+      "ipRanges": [
+        {
+            "range": "10.100.0.0/16",
+            "range_start": "10.100.128.0"
+        },
+        {
+            "range": "fd10:100::/64"
+        }
+      ]
+    }
   }'

@@ -306,8 +306,8 @@ func overlayNetwork(iface string) (mac.MAC, error) {
 	if err != nil {
 		return nil, err
 	}
-	// firsly delete IP address(es) (it it exist) from overlay interface
-	overlayAddrs, err := netlink.AddrList(overlayLink, netlink.FAMILY_V4)
+	// firsly delete IP address(es) (if it exist) from overlay interface
+	overlayAddrs, err := netlink.AddrList(overlayLink, 0)
 	if err != nil {
 		return nil, err
 	}
