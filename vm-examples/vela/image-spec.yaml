@@ -17,13 +17,19 @@ commands:
     user: root
     sysvInitAction: respawn
     shell: 'cat /tmp/neon-logs.fifo > /dev/virtio-ports/tech.neon.log.0'
+  - name: secrets
+    user: root
+    sysvInitAction: once
+    shell: 'secret-to-env /vela/secrets >> /vela/env'
   - name: compose
     user: postgres
     sysvInitAction: once
-    shell: 'cgexec -g memory:vela podman compose --file /vela/compose.yaml up --detach'
+    shell: 'cgexec -g memory:vela podman compose --file /vela/compose.yaml --env-file /vela/env up --detach'
 files:
   - filename: cgconfig.conf
     hostPath: cgconfig.conf
+  - filename: secrets-to-env
+    hostPath: secrets-to-env
 build: |
   ARG RUST_IMG_TAG=replaceme
   ARG RUST_IMG_SHA=replaceme
@@ -54,6 +60,8 @@ merge: |
   RUN adduser vm-monitor --disabled-password --no-create-home
 
   COPY cgconfig.conf         /etc/cgconfig.conf
+  COPY secrets-to-env      /usr/local/bin/secrets-to-env
+  RUN chmod +x /usr/local/bin/secrets-to-env
 
   # General tools
   RUN set -e \
