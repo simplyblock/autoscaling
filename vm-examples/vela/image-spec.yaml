@@ -22,7 +22,6 @@ commands:
     sysvInitAction: once
     shell: 'secret-to-env /vela/secrets >> /vela/env'
   - name: compose
-    user: postgres
     sysvInitAction: once
     shell: 'cgexec -g memory:vela podman compose --file /vela/compose.yaml --env-file /vela/env up --detach'
 files:
