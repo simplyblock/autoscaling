@@ -20,7 +20,7 @@ commands:
   - name: secrets
     user: root
     sysvInitAction: once
-    shell: 'secret-to-env /vela/secrets >> /vela/env'
+    shell: 'secrets-to-env /vela/secrets >> /vela/env'
   - name: compose
     user: root
     sysvInitAction: once
