@@ -20,10 +20,11 @@ commands:
   - name: secrets
     user: root
     sysvInitAction: once
-    shell: 'secret-to-env /vela/secrets >> /vela/env'
+    shell: '/usr/local/bin/secrets-to-env /vela/secrets >> /vela/env'
   - name: compose
+    user: root
     sysvInitAction: once
-    shell: 'cgexec -g memory:vela podman compose --file /vela/compose.yaml --env-file /vela/env up --detach'
+    shell: 'cgexec -g memory:vela podman compose --file /vela/config/docker-compose.yml --env-file /vela/env up --detach'
 files:
   - filename: cgconfig.conf
     hostPath: cgconfig.conf
