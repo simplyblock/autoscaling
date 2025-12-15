@@ -268,7 +268,7 @@ func upsertIptablesRules() error {
 	if err := insertRule(ipt, "nat", iptablesChainName, 1, "-s", extraNetCidr, "-j", "ACCEPT"); err != nil {
 		return err
 	}
-	if err := insertRule(ipt, "nat", iptablesChainName, 2, "-d", extraNetCidr, "-j", "ACCEPT"); err != nil {
+	if err := insertRule(ipt, "nat", iptablesChainName, 2, "-d", extraNetCidr, "-j", "MASQUERADE"); err != nil {
 		return err
 	}
 
