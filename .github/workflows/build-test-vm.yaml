@@ -14,10 +14,6 @@ on:
         default: '["amd64"]'
   workflow_call:
     inputs:
-      skip:
-        description: 'Changes this action to perform a no-op'
-        type: boolean
-        required: false
       tag:
         description: 'Tag to use for the Docker images'
         type: string
@@ -43,25 +39,7 @@ defaults:
     shell: bash -euo pipefail {0}
 
 jobs:
-  # note: this tags job must be separate and NOT skipped with inputs.skip, so that way the workflow
-  # itself still succeeds, while not doing anything when called by the release workflow.
-  tags:
-    outputs:
-      vm-postgres-16-bullseye: ${{ steps.show-tags.outputs.vm-postgres-16-bullseye }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.11.0
-        with:
-          egress-policy: audit
-
-      - id: show-tags
-        run: |
-          echo "vm-postgres-16-bullseye=${{ env.IMG_POSTGRES_16_BULLSEYE }}:${{ inputs.tag }}" >> $GITHUB_OUTPUT
-
   build:
-    # nb: use format(..) to catch both inputs.skip = true AND inputs.skip = 'true'.
-    if: ${{ format('{0}', inputs.skip) != 'true' }}
     strategy:
       matrix:
         arch: ${{ fromJson(inputs.archs) }}
