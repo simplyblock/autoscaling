@@ -70,7 +70,7 @@ jobs:
     strategy:
       matrix:
         arch: ${{ fromJson(inputs.archs) }}
-    runs-on: ${{ fromJson(format('["self-hosted", "{0}"]', matrix.arch == 'arm64' && 'huge-arm64' || 'large')) }}
+    runs-on: ubuntu-latest
     outputs:
       vm-postgres-16-bullseye: ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
       daemon: ${{ steps.tags.outputs.daemon }}
