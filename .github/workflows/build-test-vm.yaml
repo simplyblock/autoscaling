@@ -7,6 +7,11 @@ on:
         description: 'Tag to use for the Docker images'
         type: string
         required: true
+      archs:
+        description: 'Architecture to build for'
+        type: string
+        required: false
+        default: '["amd64","arm64"]'
   workflow_call:
     inputs:
       skip:
