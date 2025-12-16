@@ -83,7 +83,7 @@ jobs:
       - name: build ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
         run: |
           ./bin/vm-builder \
-              -src postgres:16-bullseye \
+              -src alpine:${ALPINE_IMG_TAG}${ALPINE_IMG_SHA} \
               -dst ${{ steps.tags.outputs.vm-postgres-16-bullseye }} \
               -daemon-image ${{ steps.tags.outputs.daemon }} \
               -build-arg ALPINE_IMG_TAG=$ALPINE_IMG_TAG \
