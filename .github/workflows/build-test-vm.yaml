@@ -109,12 +109,6 @@ jobs:
       - name: set custom docker config directory
         uses: neondatabase/dev-actions/set-docker-config-dir@6094485bf440001c94a94a3f9e221e81ff6b6193
 
-      - name: login to docker hub
-        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
-        with:
-          username: ${{ secrets.NEON_DOCKERHUB_USERNAME }}
-          password: ${{ secrets.NEON_DOCKERHUB_PASSWORD }}
-
       - name: Load base image tags and SHAs into env
         uses: ./.github/actions/deps-versions
         with:
@@ -132,15 +126,6 @@ jobs:
               -build-arg RUST_IMG_SHA=$RUST_IMG_SHA \
               -target-arch linux/${{ matrix.arch }} \
               -spec tests/e2e/image-spec.yaml
-
-      - name: docker push and annotate image ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
-        run: |
-          # docker manifest command works only with remote images so we need to push the image first
-          docker push ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
-          docker buildx imagetools inspect ${{ steps.tags.outputs.vm-postgres-16-bullseye }} --format '{{ .Manifests }}'
-          docker manifest create ${{ steps.tags.outputs.vm-postgres-16-bullseye }} ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
-          docker manifest annotate ${{ steps.tags.outputs.vm-postgres-16-bullseye }} ${{ steps.tags.outputs.vm-postgres-16-bullseye }} --os linux --arch ${{ matrix.arch }}
-          docker manifest push ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
 
   merge-vm-images:
     needs: [build]
