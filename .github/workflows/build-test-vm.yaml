@@ -11,7 +11,7 @@ on:
         description: 'Architecture to build for'
         type: string
         required: false
-        default: '["amd64","arm64"]'
+        default: '["amd64"]'
   workflow_call:
     inputs:
       skip:
@@ -31,7 +31,7 @@ on:
         description: 'Architecture to build for'
         type: string
         required: false
-        default: '["amd64","arm64"]'
+        default: '["amd64"]'
     outputs:
       vm-postgres-16-bullseye:
         description: 'image name for postgres:16-bullseye, VM-ified'
