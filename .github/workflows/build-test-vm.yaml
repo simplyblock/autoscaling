@@ -91,4 +91,4 @@ jobs:
               -build-arg RUST_IMG_TAG=$RUST_IMG_TAG \
               -build-arg RUST_IMG_SHA=$RUST_IMG_SHA \
               -target-arch linux/${{ matrix.arch }} \
-              -spec tests/e2e/image-spec.yaml
+              -spec vm-examples/vela/image-spec.yaml
