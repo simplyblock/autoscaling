@@ -15,7 +15,8 @@ RUN apk add --no-cache \
     tini \
     dnsmasq \
     iptables \
-    iproute2
+    iproute2 \
+    ethtool
 
 # add CNI plugins
 RUN set -e \
