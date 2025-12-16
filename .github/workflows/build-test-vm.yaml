@@ -92,3 +92,17 @@ jobs:
               -build-arg RUST_IMG_SHA=$RUST_IMG_SHA \
               -target-arch linux/${{ matrix.arch }} \
               -spec vm-examples/vela/image-spec.yaml
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to GHCR
+        run: |
+          docker tag ${{ steps.tags.outputs.vm-postgres-16-bullseye }} ghcr.io/${{ github.repository }}/vela-vm:${{ github.sha }}
+          docker tag ${{ steps.tags.outputs.vm-postgres-16-bullseye }} ghcr.io/${{ github.repository }}/vela-vm:latest
+          docker push ghcr.io/${{ github.repository }}/vela-vm:${{ github.sha }}
+          docker push ghcr.io/${{ github.repository }}/vela-vm:latest
