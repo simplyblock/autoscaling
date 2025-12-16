@@ -97,9 +97,6 @@ jobs:
         env:
           IMG_DAEMON: ${{ steps.tags.outputs.daemon }}
 
-      - name: set custom docker config directory
-        uses: neondatabase/dev-actions/set-docker-config-dir@6094485bf440001c94a94a3f9e221e81ff6b6193
-
       - name: Load base image tags and SHAs into env
         uses: ./.github/actions/deps-versions
         with:
