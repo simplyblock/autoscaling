@@ -22,11 +22,6 @@ on:
         description: 'Tag to use for the Docker images'
         type: string
         required: true
-      upload-vm-builder:
-        description: 'If true, upload vm-builder in an artifact'
-        type: boolean
-        required: false
-        default: false
       archs:
         description: 'Architecture to build for'
         type: string
@@ -101,15 +96,6 @@ jobs:
       - run: make bin/vm-builder
         env:
           IMG_DAEMON: ${{ steps.tags.outputs.daemon }}
-
-      - name: upload vm-builder
-        if: ${{ format('{0}', inputs.upload-vm-builder) == 'true' }}
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
-        with:
-          name: ${{ format('vm-builder-{0}', matrix.arch) }}
-          path: bin/vm-builder
-          if-no-files-found: error
-          retention-days: 2
 
       - name: set custom docker config directory
         uses: neondatabase/dev-actions/set-docker-config-dir@6094485bf440001c94a94a3f9e221e81ff6b6193
