@@ -930,25 +930,6 @@ RUN case "${PG_VERSION:?}" in \
 
 USER root
 
-#########################################################################################
-#
-# Layer "pg_tiktoken-build"
-# Compile "pg_tiktoken" extension
-#
-#########################################################################################
-
-FROM build-deps AS pg_tiktoken-src
-ARG PG_VERSION
-
-# doesn't use releases
-# 9118dd4549b7d8c0bbc98e04322499f7bf2fa6f7 - on Oct 29, 2024
-WORKDIR /ext-src
-RUN wget https://github.com/kelvich/pg_tiktoken/archive/9118dd4549b7d8c0bbc98e04322499f7bf2fa6f7.tar.gz -O pg_tiktoken.tar.gz && \
-    echo "a5bc447e7920ee149d3c064b8b9f0086c0e83939499753178f7d35788416f628 pg_tiktoken.tar.gz" | sha256sum --check && \
-    mkdir pg_tiktoken-src && cd pg_tiktoken-src && tar xzf ../pg_tiktoken.tar.gz --strip-components=1 -C . && \
-    sed -i 's/pgrx = { version = "=0.12.6",/pgrx = { version = "0.12.9",/g' Cargo.toml && \
-    sed -i 's/pgrx-tests = "=0.12.6"/pgrx-tests = "0.12.9"/g' Cargo.toml
-
 FROM rust-extensions-build AS pg_tiktoken-build
 COPY --from=pg_tiktoken-src /ext-src/ /ext-src/
 WORKDIR /ext-src/pg_tiktoken-src
@@ -1335,7 +1316,6 @@ COPY --from=h3-pg-build /h3/usr /
 COPY --from=postgresql-unit-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgvector-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgjwt-build /usr/local/pgsql/ /usr/local/pgsql/
-COPY --from=pg_tiktoken-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=hypopg-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=online_advisor-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_hashids-build /usr/local/pgsql/ /usr/local/pgsql/
@@ -1499,7 +1479,6 @@ COPY --from=h3-pg-src /ext-src/h3-pg-src /ext-src/h3-pg-src
 COPY --from=postgresql-unit-src /ext-src/ /ext-src/
 COPY --from=pgvector-src /ext-src/ /ext-src/
 COPY --from=pgjwt-src /ext-src/ /ext-src/
-#COPY --from=pg_tiktoken-src /ext-src/ /ext-src/
 COPY --from=hypopg-src /ext-src/ /ext-src/
 COPY --from=online_advisor-src /ext-src/ /ext-src/
 COPY --from=pg_hashids-src /ext-src/ /ext-src/
