@@ -43,17 +43,7 @@ jobs:
           arch: amd64
 
       - name: build vela image
-        run: |
-          ./bin/vm-builder \
-              -src alpine:${ALPINE_IMG_TAG}${ALPINE_IMG_SHA} \
-              -dst vela-vm \
-              -daemon-image docker.io/neondatabase/neonvm-daemon \
-              -build-arg ALPINE_IMG_TAG=$ALPINE_IMG_TAG \
-              -build-arg ALPINE_IMG_SHA=$ALPINE_IMG_SHA \
-              -build-arg RUST_IMG_TAG=$RUST_IMG_TAG \
-              -build-arg RUST_IMG_SHA=$RUST_IMG_SHA \
-              -target-arch linux/amd64 \
-              -spec vm-examples/vela/image-spec.yaml
+        run: make vela-image
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -77,7 +67,7 @@ jobs:
           for tag_name in "${{ steps.meta.outputs.tag-names }}"; do
             tag=ghcr.io/${{ github.repository }}/vela-vm:${tag_name}
             echo "Pushing to ${tag}"
-            docker tag vela-vm ${tag}
+            docker tag vela-img:latest ${tag}
             docker push ${tag}
           done
 
