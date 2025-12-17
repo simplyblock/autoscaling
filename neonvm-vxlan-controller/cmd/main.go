@@ -5,9 +5,11 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"syscall"
 	"time"
 
@@ -71,6 +73,12 @@ func main() {
 	// create linux bridge
 	log.Printf("creating linux bridge interface (name: %s)", VXLAN_BRIDGE_NAME)
 	if err := createBrigeInterface(VXLAN_BRIDGE_NAME); err != nil {
+		log.Fatal(err)
+	}
+
+	// configure bridge IP
+	log.Printf("configuring IP for bridge %s based on node IP %s", VXLAN_BRIDGE_NAME, ownNodeIP)
+	if err := configureBridgeIP(VXLAN_BRIDGE_NAME, ownNodeIP); err != nil {
 		log.Fatal(err)
 	}
 
@@ -187,6 +195,13 @@ func createVxlanInterface(name string, vxlanID int, ownIP string, bridgeName str
 		return err
 	}
 
+	// Disable TX checksum offloading
+	// ethtool -K neon-vxlan0 tx off
+	cmd := exec.Command("ethtool", "-K", name, "tx", "off")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to disable tx checksum: %w, output: %s", err, string(out))
+	}
+
 	return nil
 }
 
@@ -268,7 +283,7 @@ func upsertIptablesRules() error {
 	if err := insertRule(ipt, "nat", iptablesChainName, 1, "-s", extraNetCidr, "-j", "ACCEPT"); err != nil {
 		return err
 	}
-	if err := insertRule(ipt, "nat", iptablesChainName, 2, "-d", extraNetCidr, "-j", "ACCEPT"); err != nil {
+	if err := insertRule(ipt, "nat", iptablesChainName, 2, "-d", extraNetCidr, "-j", "MASQUERADE"); err != nil {
 		return err
 	}
 
@@ -298,6 +313,46 @@ func insertRule(ipt *iptables.IPTables, table, chain string, pos int, rulespec .
 
 	if !exists {
 		return ipt.Insert(table, chain, pos, rulespec...)
+	}
+
+	return nil
+}
+
+func configureBridgeIP(bridgeName string, nodeIP string) error {
+	// Parse the node IP
+	parsedNodeIP := net.ParseIP(nodeIP)
+	if parsedNodeIP == nil {
+		return &net.ParseError{Type: "IP address", Text: nodeIP}
+	}
+	ipv4 := parsedNodeIP.To4()
+	if ipv4 == nil {
+		// fallback or error for IPv6 if not supported in this logic
+		// simpler to error out or skip for now if only IPv4 logic applies
+		// For now assuming IPv4 as per task context
+		log.Printf("warning: node IP %s is not a standard IPv4 address", nodeIP)
+	}
+
+	// Strategy: Use 10.100.255.<last_octet>/16
+	// This ensures it falls into the free upper range of the 10.100.0.0/16 subnet
+	lastOctet := ipv4[3]
+	newIP := fmt.Sprintf("10.100.255.%d/16", lastOctet)
+
+	log.Printf("calculating overlay IP: %s (derived from %s)", newIP, nodeIP)
+
+	addr, err := netlink.ParseAddr(newIP)
+	if err != nil {
+		return err
+	}
+
+	link, err := netlink.LinkByName(bridgeName)
+	if err != nil {
+		return err
+	}
+
+	// Check if the address implies a route (it does)
+	// We use AddrReplace to update/set it
+	if err := netlink.AddrReplace(link, addr); err != nil {
+		return err
 	}
 
 	return nil
