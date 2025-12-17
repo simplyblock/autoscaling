@@ -1367,18 +1367,10 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then\
 #########################################################################################
 FROM pg-build-with-cargo AS postgres-cleanup-layer
 
-COPY --from=neon-pg-ext-build /usr/local/pgsql /usr/local/pgsql
-
-# Remove binaries from /bin/ that we won't use (or would manually copy & install otherwise)
-RUN cd /usr/local/pgsql/bin && rm -f ecpg raster2pgsql shp2pgsql pgtopo_export pgtopo_import pgsql2shp
-
-# Remove headers that we won't need anymore - we've completed installation of all extensions
-RUN rm -r /usr/local/pgsql/include
-
-# Remove static postgresql libraries - all compilation is finished, so we
-# can now remove these files - they must be included in other binaries by now
-# if they were to be used by other libraries.
-RUN rm /usr/local/pgsql/lib/lib*.a
+COPY --from=neon-pg-ext-build /usr/local/pgsql/bin /usr/local/pgsql/bin
+COPY --from=neon-pg-ext-build /usr/local/pgsql/lib /usr/local/pgsql/lib
+COPY --from=neon-pg-ext-build /usr/local/pgsql/share /usr/local/pgsql/share
+# Don't copy the headers - we've completed installation of all extensions
 
 #########################################################################################
 #
