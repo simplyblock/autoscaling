@@ -932,35 +932,6 @@ USER root
 
 #########################################################################################
 #
-# Layer "pg_jsonschema-build"
-# Compile "pg_jsonschema" extension
-#
-#########################################################################################
-
-FROM build-deps AS pg_jsonschema-src
-ARG PG_VERSION
-# last release v0.3.3 - Oct 16, 2024
-WORKDIR /ext-src
-RUN wget https://github.com/supabase/pg_jsonschema/archive/refs/tags/v0.3.3.tar.gz -O pg_jsonschema.tar.gz && \
-    echo "40c2cffab4187e0233cb8c3bde013be92218c282f95f4469c5282f6b30d64eac pg_jsonschema.tar.gz" | sha256sum --check && \
-    mkdir pg_jsonschema-src && cd pg_jsonschema-src && tar xzf ../pg_jsonschema.tar.gz --strip-components=1 -C .
-
-FROM rust-extensions-build AS pg_jsonschema-build
-COPY --from=pg_jsonschema-src /ext-src/ /ext-src/
-WORKDIR /ext-src/pg_jsonschema-src
-RUN \
-    # see commit 252b3685a27a0f4c31a0f91e983c6314838e89e8
-    # `unsafe-postgres` feature allows to build pgx extensions
-    # against postgres forks that decided to change their ABI name (like us).
-    # With that we can build extensions without forking them and using stock
-    # pgx. As this feature is new few manual version bumps were required.
-    sed -i 's/pgrx = "0.12.6"/pgrx = { version = "0.12.9", features = [ "unsafe-postgres" ] }/g' Cargo.toml && \
-    sed -i 's/pgrx-tests = "0.12.6"/pgrx-tests = "0.12.9"/g' Cargo.toml && \
-    cargo pgrx install --release && \
-    echo "trusted = true" >> /usr/local/pgsql/share/extension/pg_jsonschema.control
-
-#########################################################################################
-#
 # Layer "pg_graphql-build"
 # Compile "pg_graphql" extension
 #
@@ -1393,7 +1364,6 @@ COPY --from=h3-pg-build /h3/usr /
 COPY --from=postgresql-unit-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgvector-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgjwt-build /usr/local/pgsql/ /usr/local/pgsql/
-COPY --from=pg_jsonschema-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_graphql-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_tiktoken-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=hypopg-build /usr/local/pgsql/ /usr/local/pgsql/
@@ -1559,7 +1529,6 @@ COPY --from=h3-pg-src /ext-src/h3-pg-src /ext-src/h3-pg-src
 COPY --from=postgresql-unit-src /ext-src/ /ext-src/
 COPY --from=pgvector-src /ext-src/ /ext-src/
 COPY --from=pgjwt-src /ext-src/ /ext-src/
-#COPY --from=pg_jsonschema-src /ext-src/ /ext-src/
 COPY --from=pg_graphql-src /ext-src/ /ext-src/
 #COPY --from=pg_tiktoken-src /ext-src/ /ext-src/
 COPY --from=hypopg-src /ext-src/ /ext-src/
