@@ -74,7 +74,7 @@ jobs:
 
       - name: Push to GHCR
         run: |
-          for tag_name in ${{ steps.meta.outputs.tag-names }}; do
+          for tag_name in "${{ steps.meta.outputs.tag-names }}"; do
             tag=ghcr.io/${{ github.repository }}/vela-vm:${tag_name}
             echo "Pushing to ${tag}"
             docker tag vela-vm ${tag}
