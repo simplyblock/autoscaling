@@ -932,66 +932,6 @@ USER root
 
 #########################################################################################
 #
-# Layers "pg-onnx-build" and "pgrag-build"
-# Compile "pgrag" extensions
-#
-#########################################################################################
-
-FROM build-deps AS pgrag-src
-ARG PG_VERSION
-WORKDIR /ext-src
-COPY ./patches/onnxruntime.patch .
-
-RUN wget https://github.com/microsoft/onnxruntime/archive/refs/tags/v1.18.1.tar.gz -O onnxruntime.tar.gz && \
-    mkdir onnxruntime-src && cd onnxruntime-src && tar xzf ../onnxruntime.tar.gz --strip-components=1 -C . && \
-    patch -p1 < /ext-src/onnxruntime.patch && \
-    echo "#nothing to test here" > neon-test.sh
-
-RUN wget https://github.com/neondatabase-labs/pgrag/archive/refs/tags/v0.1.2.tar.gz -O pgrag.tar.gz &&  \
-    echo "7361654ea24f08cbb9db13c2ee1c0fe008f6114076401bb871619690dafc5225 pgrag.tar.gz" | sha256sum --check && \
-    mkdir pgrag-src && cd pgrag-src && tar xzf ../pgrag.tar.gz --strip-components=1 -C .
-
-FROM rust-extensions-build AS pgrag-build
-COPY --from=pgrag-src /ext-src/ /ext-src/
-
-# Install build-time dependencies
-# cmake 3.26 or higher is required, so installing it using pip (bullseye-backports has cmake 3.25).
-# Install it using virtual environment, because Python 3.11 (the default version on Debian 12 (Bookworm)) complains otherwise
-WORKDIR /ext-src/onnxruntime-src
-RUN apt update && apt install --no-install-recommends --no-install-suggests -y \
-    python3 python3-pip python3-venv && \
-    apt clean && rm -rf /var/lib/apt/lists/* && \
-    python3 -m venv venv && \
-    . venv/bin/activate && \
-    python3 -m pip install cmake==3.30.5
-
-RUN . venv/bin/activate && \
-    ./build.sh --config Release --parallel --cmake_generator Ninja \
-    --skip_submodule_sync --skip_tests --allow_running_as_root
-
-WORKDIR /ext-src/pgrag-src
-RUN cd exts/rag && \
-    sed -i 's/pgrx = "0.14.1"/pgrx = { version = "0.14.1", features = [ "unsafe-postgres" ] }/g' Cargo.toml && \
-    cargo pgrx install --release && \
-    echo "trusted = true" >> /usr/local/pgsql/share/extension/rag.control
-
-RUN cd exts/rag_bge_small_en_v15 && \
-    sed -i 's/pgrx = "0.14.1"/pgrx = { version = "0.14.1", features = [ "unsafe-postgres" ] }/g' Cargo.toml && \
-    ORT_LIB_LOCATION=/ext-src/onnxruntime-src/build/Linux \
-        REMOTE_ONNX_URL=http://pg-ext-s3-gateway.pg-ext-s3-gateway.svc.cluster.local/pgrag-data/bge_small_en_v15.onnx \
-        cargo pgrx install --release --features remote_onnx && \
-    echo "trusted = true" >> /usr/local/pgsql/share/extension/rag_bge_small_en_v15.control
-
-RUN cd exts/rag_jina_reranker_v1_tiny_en && \
-    sed -i 's/pgrx = "0.14.1"/pgrx = { version = "0.14.1", features = [ "unsafe-postgres" ] }/g' Cargo.toml && \
-    ORT_LIB_LOCATION=/ext-src/onnxruntime-src/build/Linux \
-        REMOTE_ONNX_URL=http://pg-ext-s3-gateway.pg-ext-s3-gateway.svc.cluster.local/pgrag-data/jina_reranker_v1_tiny_en.onnx \
-        cargo pgrx install --release --features remote_onnx && \
-    echo "trusted = true" >> /usr/local/pgsql/share/extension/rag_jina_reranker_v1_tiny_en.control
-
-
-#########################################################################################
-#
 # Layer "pg_jsonschema-build"
 # Compile "pg_jsonschema" extension
 #
@@ -1432,7 +1372,6 @@ RUN mkdir /usr/local/pgsql
 #########################################################################################
 FROM build-deps AS extensions-minimal
 
-COPY --from=pgrag-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=timescaledb-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_cron-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_partman-build /usr/local/pgsql/ /usr/local/pgsql/
@@ -1454,7 +1393,6 @@ COPY --from=h3-pg-build /h3/usr /
 COPY --from=postgresql-unit-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgvector-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgjwt-build /usr/local/pgsql/ /usr/local/pgsql/
-COPY --from=pgrag-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_jsonschema-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_graphql-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_tiktoken-build /usr/local/pgsql/ /usr/local/pgsql/
@@ -1621,7 +1559,6 @@ COPY --from=h3-pg-src /ext-src/h3-pg-src /ext-src/h3-pg-src
 COPY --from=postgresql-unit-src /ext-src/ /ext-src/
 COPY --from=pgvector-src /ext-src/ /ext-src/
 COPY --from=pgjwt-src /ext-src/ /ext-src/
-#COPY --from=pgrag-src /ext-src/ /ext-src/
 #COPY --from=pg_jsonschema-src /ext-src/ /ext-src/
 COPY --from=pg_graphql-src /ext-src/ /ext-src/
 #COPY --from=pg_tiktoken-src /ext-src/ /ext-src/
