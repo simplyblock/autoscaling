@@ -370,84 +370,6 @@ RUN mkdir build && cd build && \
     ninja -j $(getconf _NPROCESSORS_ONLN) install && \
     echo 'trusted = true' >> /usr/local/pgsql/share/extension/pgrouting.control
 
-#########################################################################################
-#
-# Layer "plv8-build"
-# Build plv8
-#
-#########################################################################################
-FROM build-deps AS plv8-src
-ARG PG_VERSION
-WORKDIR /ext-src
-
-COPY ./patches/plv8* .
-
-# plv8 3.2.3 supports v17
-# last release v3.2.3 - Sep 7, 2024
-#
-# clone the repo instead of downloading the release tarball because plv8 has submodule dependencies
-# and the release tarball doesn't include them
-#
-# Use new version only for v17
-# because since v3.2, plv8 doesn't include plcoffee and plls extensions
-RUN case "${PG_VERSION:?}" in \
-    "v18") \
-       export PLV8_TAG=v3.2.4 \
-    ;; \
-    "v17") \
-        export PLV8_TAG=v3.2.3 \
-    ;; \
-    "v14" | "v15" | "v16") \
-        export PLV8_TAG=v3.1.10 \
-    ;; \
-    *) \
-        echo "unexpected PostgreSQL version" && exit 1 \
-    ;; \
-    esac && \
-    git clone --recurse-submodules --depth 1 --branch ${PLV8_TAG} https://github.com/plv8/plv8.git plv8-src && \
-    tar -czf plv8.tar.gz --exclude .git plv8-src && \
-    cd plv8-src && \
-    if [[ "${PG_VERSION:?}" < "v17" ]]; then patch -p1 < /ext-src/plv8_v3.1.10.patch; elif [[ "${PG_VERSION:?}" = "v17" ]]; then patch -p1 < /ext-src/plv8_v3.2.3.patch; fi
-
-# Step 1: Build the vendored V8 engine. It doesn't depend on PostgreSQL, so use
-# 'build-deps' as the base. This enables caching and avoids unnecessary rebuilds.
-# (The V8 engine takes a very long time to build)
-FROM build-deps AS plv8-build
-ARG PG_VERSION
-WORKDIR /ext-src/plv8-src
-RUN apt update && \
-    apt install --no-install-recommends --no-install-suggests -y \
-    ninja-build python3-dev libncurses5 binutils clang \
-    && apt clean && rm -rf /var/lib/apt/lists/*
-COPY --from=plv8-src /ext-src/ /ext-src/
-RUN make DOCKER=1 -j $(getconf _NPROCESSORS_ONLN) v8
-
-# Step 2: Build the PostgreSQL-dependent parts
-COPY --from=pg-build /usr/local/pgsql /usr/local/pgsql
-ENV PATH="/usr/local/pgsql/bin:$PATH"
-RUN \
-    # generate and copy upgrade scripts
-    make generate_upgrades && \
-    cp upgrade/* /usr/local/pgsql/share/extension/ && \
-    make DOCKER=1 -j $(getconf _NPROCESSORS_ONLN) install && \
-    rm -rf /plv8-* && \
-    find /usr/local/pgsql/ -name "plv8-*.so" | xargs strip && \
-    # don't break computes with installed old version of plv8
-    cd /usr/local/pgsql/lib/ && \
-    case "${PG_VERSION:?}" in \
-    "v17") \
-        ln -s plv8-3.2.3.so plv8-3.1.8.so && \
-        ln -s plv8-3.2.3.so plv8-3.1.5.so && \
-        ln -s plv8-3.2.3.so plv8-3.1.10.so \
-    ;; \
-    "v14" | "v15" | "v16") \
-        ln -s plv8-3.1.10.so plv8-3.1.5.so && \
-        ln -s plv8-3.1.10.so plv8-3.1.8.so \
-    ;; \
-    esac && \
-    echo 'trusted = true' >> /usr/local/pgsql/share/extension/plv8.control && \
-    echo 'trusted = true' >> /usr/local/pgsql/share/extension/plcoffee.control && \
-    echo 'trusted = true' >> /usr/local/pgsql/share/extension/plls.control
 
 #########################################################################################
 #
@@ -1609,7 +1531,6 @@ FROM build-deps AS extensions-all
 COPY --from=postgis-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=postgis-build /sfcgal/* /
 COPY --from=pgrouting-build /usr/local/pgsql/ /usr/local/pgsql/
-COPY --from=plv8-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=h3-pg-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=h3-pg-build /h3/usr /
 COPY --from=postgresql-unit-build /usr/local/pgsql/ /usr/local/pgsql/
@@ -1779,7 +1700,6 @@ COPY --from=pg-build /postgres /postgres
 COPY --from=postgis-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=postgis-build /ext-src/postgis-src /ext-src/postgis-src
 COPY --from=postgis-build /sfcgal/* /usr
-COPY --from=plv8-src /ext-src/ /ext-src/
 COPY --from=h3-pg-src /ext-src/h3-pg-src /ext-src/h3-pg-src
 COPY --from=postgresql-unit-src /ext-src/ /ext-src/
 COPY --from=pgvector-src /ext-src/ /ext-src/
