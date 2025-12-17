@@ -1104,29 +1104,6 @@ RUN make -j $(getconf _NPROCESSORS_ONLN) && \
     make -j $(getconf _NPROCESSORS_ONLN) install && \
     echo 'trusted = true' >> /usr/local/pgsql/share/extension/pg_partman.control
 
-#########################################################################################
-#
-# Layer "pg_mooncake"
-# compile pg_mooncake extension
-#
-#########################################################################################
-FROM build-deps AS pg_mooncake-src
-ARG PG_VERSION
-WORKDIR /ext-src
-COPY ./patches/duckdb_v113.patch .
-RUN wget https://github.com/Mooncake-Labs/pg_mooncake/releases/download/v0.1.2/pg_mooncake-0.1.2.tar.gz -O pg_mooncake.tar.gz && \
-    echo "4550473784fcdd2e1e18062bc01eb9c286abd27cdf5e11a4399be6c0a426ba90 pg_mooncake.tar.gz" | sha256sum --check && \
-    mkdir pg_mooncake-src && cd pg_mooncake-src && tar xzf ../pg_mooncake.tar.gz --strip-components=1 -C . && \
-    cd third_party/duckdb && patch -p1 < /ext-src/duckdb_v113.patch && cd ../.. && \
-    echo "make -f pg_mooncake-src/Makefile.build installcheck TEST_DIR=./test SQL_DIR=./sql SRC_DIR=./src" > neon-test.sh && \
-    chmod a+x neon-test.sh
-
-FROM rust-extensions-build AS pg_mooncake-build
-COPY --from=pg_mooncake-src /ext-src/ /ext-src/
-WORKDIR /ext-src/pg_mooncake-src
-RUN make release -j $(getconf _NPROCESSORS_ONLN) && \
-    make install -j $(getconf _NPROCESSORS_ONLN) && \
-    echo 'trusted = true' >> /usr/local/pgsql/share/extension/pg_mooncake.control
 
 #########################################################################################
 #
@@ -1308,7 +1285,6 @@ COPY --from=wal2json-build /usr/local/pgsql /usr/local/pgsql
 COPY --from=pg-anon-pg-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_ivm-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_partman-build /usr/local/pgsql/ /usr/local/pgsql/
-COPY --from=pg_mooncake-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_duckdb-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_repack-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgaudit-build /usr/local/pgsql/ /usr/local/pgsql/
@@ -1471,7 +1447,6 @@ COPY --from=pg_roaringbitmap-src /ext-src/ /ext-src/
 #COPY --from=wal2json-src /ext-src/ /ext-src/
 COPY --from=pg_ivm-src /ext-src/ /ext-src/
 COPY --from=pg_partman-src /ext-src/ /ext-src/
-#COPY --from=pg_mooncake-src /ext-src/ /ext-src/
 COPY --from=pg_repack-src /ext-src/ /ext-src/
 COPY --from=pg_repack-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY ./patches/pg_repack.patch /ext-src
