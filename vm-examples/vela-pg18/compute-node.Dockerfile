@@ -829,88 +829,6 @@ RUN make -j $(getconf _NPROCESSORS_ONLN) && \
     make -j $(getconf _NPROCESSORS_ONLN) install && \
     echo 'trusted = true' >> /usr/local/pgsql/share/extension/pg_cron.control
 
-#########################################################################################
-#
-# Layer "rdkit-build"
-# compile rdkit extension
-#
-#########################################################################################
-FROM build-deps AS rdkit-src
-ARG PG_VERSION
-
-# rdkit Release_2024_09_1 supports v17
-# last release Release_2024_09_1 - Sep 27, 2024
-#
-# Use new version only for v17
-# because Release_2024_09_1 has some backward incompatible changes
-# https://github.com/rdkit/rdkit/releases/tag/Release_2024_09_1
-
-WORKDIR /ext-src
-RUN case "${PG_VERSION:?}" in \
-    "v17" | "v18") \
-        export RDKIT_VERSION=Release_2024_09_1 \
-        export RDKIT_CHECKSUM=034c00d6e9de323506834da03400761ed8c3721095114369d06805409747a60f \
-    ;; \
-    "v14" | "v15" | "v16") \
-        export RDKIT_VERSION=Release_2023_03_3 \
-        export RDKIT_CHECKSUM=bdbf9a2e6988526bfeb8c56ce3cdfe2998d60ac289078e2215374288185e8c8d \
-    ;; \
-    *) \
-        echo "unexpected PostgreSQL version" && exit 1 \
-    ;; \
-    esac && \
-    wget https://github.com/rdkit/rdkit/archive/refs/tags/${RDKIT_VERSION}.tar.gz -O rdkit.tar.gz && \
-    echo "${RDKIT_CHECKSUM} rdkit.tar.gz" | sha256sum --check && \
-    mkdir rdkit-src && cd rdkit-src && tar xzf ../rdkit.tar.gz --strip-components=1 -C .
-
-FROM pg-build AS rdkit-build
-RUN apt update && \
-    apt install --no-install-recommends --no-install-suggests -y \
-        libboost-iostreams1.74-dev \
-        libboost-regex1.74-dev \
-        libboost-serialization1.74-dev \
-        libboost-system1.74-dev \
-        libeigen3-dev \
-        libboost-all-dev \
-    && apt clean && rm -rf /var/lib/apt/lists/*
-
-COPY --from=rdkit-src /ext-src/ /ext-src/
-WORKDIR /ext-src/rdkit-src
-
-# XXX: /usr/local/pgsql/bin is already in PATH, and that should be enough to find
-# pg_config. For some reason the rdkit cmake script doesn't work with just that,
-# however. By also adding /usr/local/pgsql, it works, which is weird because there
-# are no executables in that directory.
-ENV PATH="/usr/local/pgsql:$PATH"
-RUN cmake \
-        -D RDK_BUILD_CAIRO_SUPPORT=OFF \
-        -D RDK_BUILD_INCHI_SUPPORT=ON \
-        -D RDK_BUILD_AVALON_SUPPORT=ON \
-        -D RDK_BUILD_PYTHON_WRAPPERS=OFF \
-        -D RDK_BUILD_DESCRIPTORS3D=OFF \
-        -D RDK_BUILD_FREESASA_SUPPORT=OFF \
-        -D RDK_BUILD_COORDGEN_SUPPORT=ON \
-        -D RDK_BUILD_MOLINTERCHANGE_SUPPORT=OFF \
-        -D RDK_BUILD_YAEHMOP_SUPPORT=OFF \
-        -D RDK_BUILD_STRUCTCHECKER_SUPPORT=OFF \
-        -D RDK_TEST_MULTITHREADED=OFF \
-        -D RDK_BUILD_CPP_TESTS=OFF \
-        -D RDK_USE_URF=OFF \
-        -D RDK_BUILD_PGSQL=ON \
-        -D RDK_PGSQL_STATIC=ON \
-        -D PostgreSQL_CONFIG=pg_config \
-        -D PostgreSQL_INCLUDE_DIR=`pg_config --includedir` \
-        -D PostgreSQL_TYPE_INCLUDE_DIR=`pg_config --includedir-server` \
-        -D PostgreSQL_LIBRARY_DIR=`pg_config --libdir` \
-        -D RDK_INSTALL_INTREE=OFF \
-        -D RDK_INSTALL_COMIC_FONTS=OFF \
-        -D RDK_BUILD_FREETYPE_SUPPORT=OFF \
-        -D CMAKE_BUILD_TYPE=Release \
-        -GNinja \
-        . && \
-    ninja -j $(getconf _NPROCESSORS_ONLN) && \
-    ninja -j $(getconf _NPROCESSORS_ONLN) install && \
-    echo 'trusted = true' >> /usr/local/pgsql/share/extension/rdkit.control
 
 #########################################################################################
 #
@@ -1555,7 +1473,6 @@ COPY --from=pg_cron-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgx_ulid-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgx_ulid-pgrx12-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_session_jwt-build /usr/local/pgsql/ /usr/local/pgsql/
-COPY --from=rdkit-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_uuidv7-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_roaringbitmap-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=wal2json-build /usr/local/pgsql /usr/local/pgsql
@@ -1725,7 +1642,6 @@ COPY --from=pg_cron-src /ext-src/ /ext-src/
 #COPY --from=pgx_ulid-src /ext-src/ /ext-src/
 #COPY --from=pgx_ulid-pgrx12-src /ext-src/ /ext-src/
 #COPY --from=pg_session_jwt-src /ext-src/ /ext-src/
-#COPY --from=rdkit-src /ext-src/ /ext-src/
 COPY --from=pg_uuidv7-src /ext-src/ /ext-src/
 COPY --from=pg_roaringbitmap-src /ext-src/ /ext-src/
 #COPY --from=wal2json-src /ext-src/ /ext-src/
