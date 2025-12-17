@@ -1001,33 +1001,6 @@ RUN if [ -d pgx_ulid-src ]; then \
         echo 'trusted = true' >> /usr/local/pgsql/share/extension/pgx_ulid.control; \
     fi
 
-#########################################################################################
-#
-# Layer "pg_session_jwt-build"
-# Compile "pg_session_jwt" extension
-#
-#########################################################################################
-
-FROM build-deps AS pg_session_jwt-src
-ARG PG_VERSION
-
-# NOTE: local_proxy depends on the version of pg_session_jwt
-# Do not update without approve from proxy team
-# Make sure the version is reflected in proxy/src/serverless/local_conn_pool.rs
-WORKDIR /ext-src
-RUN wget https://github.com/neondatabase/pg_session_jwt/archive/refs/tags/v0.3.1.tar.gz -O pg_session_jwt.tar.gz && \
-    echo "62fec9e472cb805c53ba24a0765afdb8ea2720cfc03ae7813e61687b36d1b0ad pg_session_jwt.tar.gz" | sha256sum --check && \
-    mkdir pg_session_jwt-src && cd pg_session_jwt-src && tar xzf ../pg_session_jwt.tar.gz --strip-components=1 -C . && \
-    sed -i 's/pgrx = "0.12.6"/pgrx = { version = "0.12.9", features = [ "unsafe-postgres" ] }/g' Cargo.toml && \
-    sed -i 's/version = "0.12.6"/version = "0.12.9"/g' pgrx-tests/Cargo.toml && \
-    sed -i 's/pgrx = "=0.12.6"/pgrx = { version = "=0.12.9", features = [ "unsafe-postgres" ] }/g' pgrx-tests/Cargo.toml && \
-    sed -i 's/pgrx-macros = "=0.12.6"/pgrx-macros = "=0.12.9"/g' pgrx-tests/Cargo.toml && \
-    sed -i 's/pgrx-pg-config = "=0.12.6"/pgrx-pg-config = "=0.12.9"/g' pgrx-tests/Cargo.toml
-
-FROM rust-extensions-build AS pg_session_jwt-build
-COPY --from=pg_session_jwt-src /ext-src/ /ext-src/
-WORKDIR /ext-src/pg_session_jwt-src
-RUN cargo pgrx install --release
 
 #########################################################################################
 #
@@ -1330,7 +1303,6 @@ COPY --from=pg_hint_plan-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_cron-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgx_ulid-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgx_ulid-pgrx12-build /usr/local/pgsql/ /usr/local/pgsql/
-COPY --from=pg_session_jwt-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_uuidv7-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_roaringbitmap-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=wal2json-build /usr/local/pgsql /usr/local/pgsql
@@ -1495,7 +1467,6 @@ RUN cd /ext-src/pg_hint_plan-src && patch -p1 < /ext-src/pg_hint_plan_${PG_VERSI
 COPY --from=pg_cron-src /ext-src/ /ext-src/
 #COPY --from=pgx_ulid-src /ext-src/ /ext-src/
 #COPY --from=pgx_ulid-pgrx12-src /ext-src/ /ext-src/
-#COPY --from=pg_session_jwt-src /ext-src/ /ext-src/
 COPY --from=pg_uuidv7-src /ext-src/ /ext-src/
 COPY --from=pg_roaringbitmap-src /ext-src/ /ext-src/
 #COPY --from=wal2json-src /ext-src/ /ext-src/
