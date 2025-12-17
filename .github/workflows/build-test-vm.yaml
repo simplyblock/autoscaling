@@ -2,24 +2,83 @@ name: build-test-vm
 
 on:
   workflow_dispatch: # adds ability to run this manually
+    inputs:
+      tag:
+        description: 'Tag to use for the Docker images'
+        type: string
+        required: true
   workflow_call:
+    inputs:
+      skip:
+        description: 'Changes this action to perform a no-op'
+        type: boolean
+        required: false
+      tag:
+        description: 'Tag to use for the Docker images'
+        type: string
+        required: true
+      upload-vm-builder:
+        description: 'If true, upload vm-builder in an artifact'
+        type: boolean
+        required: false
+        default: false
+      archs:
+        description: 'Architecture to build for'
+        type: string
+        required: false
+        default: '["amd64","arm64"]'
+    outputs:
+      vm-postgres-16-bullseye:
+        description: 'image name for postgres:16-bullseye, VM-ified'
+        value: ${{ jobs.tags.outputs.vm-postgres-16-bullseye }}
 
 env:
+  IMG_POSTGRES_16_BULLSEYE: "neondatabase/vm-postgres-16-bullseye"
   # using image built in the same workflow
   IMG_DAEMON: "neondatabase/neonvm-daemon"
+  TARGET_ARCH: "amd64"
 
 defaults:
   run:
     shell: bash -euo pipefail {0}
 
 jobs:
-  build:
+  # note: this tags job must be separate and NOT skipped with inputs.skip, so that way the workflow
+  # itself still succeeds, while not doing anything when called by the release workflow.
+  tags:
+    outputs:
+      vm-postgres-16-bullseye: ${{ steps.show-tags.outputs.vm-postgres-16-bullseye }}
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.11.0
         with:
           egress-policy: audit
+
+      - id: show-tags
+        run: |
+          echo "vm-postgres-16-bullseye=${{ env.IMG_POSTGRES_16_BULLSEYE }}:${{ inputs.tag }}" >> $GITHUB_OUTPUT
+
+  build:
+    # nb: use format(..) to catch both inputs.skip = true AND inputs.skip = 'true'.
+    if: ${{ format('{0}', inputs.skip) != 'true' }}
+    strategy:
+      matrix:
+        arch: ${{ fromJson(inputs.archs) }}
+    runs-on: ${{ fromJson(format('["self-hosted", "{0}"]', matrix.arch == 'arm64' && 'huge-arm64' || 'large')) }}
+    outputs:
+      vm-postgres-16-bullseye: ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
+      daemon: ${{ steps.tags.outputs.daemon }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.11.0
+        with:
+          egress-policy: audit
+
+      - id: tags
+        run: |
+          echo "vm-postgres-16-bullseye=${{ env.IMG_POSTGRES_16_BULLSEYE }}-${{ matrix.arch }}:${{ inputs.tag }}" | tee -a $GITHUB_OUTPUT
+          echo "daemon=${{ env.IMG_DAEMON }}-${{ matrix.arch }}:${{ inputs.tag }}" | tee -a $GITHUB_OUTPUT
 
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.4.0
@@ -29,52 +88,92 @@ jobs:
           cache: false
         # Sometimes setup-go gets stuck. Without this, it'll keep going until the job gets killed
         timeout-minutes: 10
-
       - name: Build daemon image
-        run: make docker-build-daemon
+        run: make TARGET_ARCH=${{ matrix.arch }} docker-build-daemon
+        env:
+          IMG_DAEMON: ${{ steps.tags.outputs.daemon }}
 
       - run: make bin/vm-builder
+        env:
+          IMG_DAEMON: ${{ steps.tags.outputs.daemon }}
+
+      - name: upload vm-builder
+        if: ${{ format('{0}', inputs.upload-vm-builder) == 'true' }}
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: ${{ format('vm-builder-{0}', matrix.arch) }}
+          path: bin/vm-builder
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: set custom docker config directory
+        uses: neondatabase/dev-actions/set-docker-config-dir@6094485bf440001c94a94a3f9e221e81ff6b6193
+
+      - name: login to docker hub
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          username: ${{ secrets.NEON_DOCKERHUB_USERNAME }}
+          password: ${{ secrets.NEON_DOCKERHUB_PASSWORD }}
 
       - name: Load base image tags and SHAs into env
         uses: ./.github/actions/deps-versions
         with:
-          arch: amd64
+          arch: ${{ matrix.arch }}
 
-      - name: build vela image
+      - name: build ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
         run: |
           ./bin/vm-builder \
-              -src alpine:${ALPINE_IMG_TAG}${ALPINE_IMG_SHA} \
-              -dst vela-vm \
-              -daemon-image docker.io/neondatabase/neonvm-daemon \
+              -src postgres:16-bullseye \
+              -dst ${{ steps.tags.outputs.vm-postgres-16-bullseye }} \
+              -daemon-image ${{ steps.tags.outputs.daemon }} \
               -build-arg ALPINE_IMG_TAG=$ALPINE_IMG_TAG \
               -build-arg ALPINE_IMG_SHA=$ALPINE_IMG_SHA \
               -build-arg RUST_IMG_TAG=$RUST_IMG_TAG \
               -build-arg RUST_IMG_SHA=$RUST_IMG_SHA \
-              -target-arch linux/amd64 \
-              -spec vm-examples/vela/image-spec.yaml
+              -target-arch linux/${{ matrix.arch }} \
+              -spec tests/e2e/image-spec.yaml
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha
-
-      - name: Push to GHCR
+      - name: docker push and annotate image ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
         run: |
-          for tag_name in ${{ steps.meta.tag-names }}; do
-            tag=ghcr.io/${{ github.repository }}/vela-vm:${tag_name}
-            echo "Pushing to ${tag}"
-            docker tag vela-vm ${tag}
-            docker push ${tag}
+          # docker manifest command works only with remote images so we need to push the image first
+          docker push ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
+          docker buildx imagetools inspect ${{ steps.tags.outputs.vm-postgres-16-bullseye }} --format '{{ .Manifests }}'
+          docker manifest create ${{ steps.tags.outputs.vm-postgres-16-bullseye }} ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
+          docker manifest annotate ${{ steps.tags.outputs.vm-postgres-16-bullseye }} ${{ steps.tags.outputs.vm-postgres-16-bullseye }} --os linux --arch ${{ matrix.arch }}
+          docker manifest push ${{ steps.tags.outputs.vm-postgres-16-bullseye }}
+
+  merge-vm-images:
+    needs: [build]
+    runs-on: ubuntu-latest
+    env:
+      ARCHS: ${{ join(fromJson(inputs.archs), ' ') }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.11.0
+        with:
+          egress-policy: audit
+
+      - name: git checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: docker - setup buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
+
+      - name: login to docker hub
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          username: ${{ secrets.NEON_DOCKERHUB_USERNAME }}
+          password: ${{ secrets.NEON_DOCKERHUB_PASSWORD }}
+
+      - name: Merge vm images
+        id: merge-vm-images
+        run: |
+          result_image="${{ env.IMG_POSTGRES_16_BULLSEYE }}:${TAG}"
+
+          args=("-t" "${result_image}")
+          for arch in ${ARCHS}; do
+            args+=("${{ env.IMG_POSTGRES_16_BULLSEYE }}-${arch}:${TAG}")
           done
+
+          docker buildx imagetools create "${args[@]}"
