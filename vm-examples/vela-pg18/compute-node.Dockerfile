@@ -932,35 +932,6 @@ USER root
 
 #########################################################################################
 #
-# Layer "pg_graphql-build"
-# Compile "pg_graphql" extension
-#
-#########################################################################################
-
-FROM build-deps AS pg_graphql-src
-ARG PG_VERSION
-
-# last release v1.5.9 - Oct 16, 2024
-WORKDIR /ext-src
-COPY ./patches/pg_graphql.patch .
-RUN wget https://github.com/supabase/pg_graphql/archive/refs/tags/v1.5.9.tar.gz -O pg_graphql.tar.gz && \
-    echo "cf768385a41278be1333472204fc0328118644ae443182cf52f7b9b23277e497 pg_graphql.tar.gz" | sha256sum --check && \
-    mkdir pg_graphql-src && cd pg_graphql-src && tar xzf ../pg_graphql.tar.gz --strip-components=1 -C . && \
-    sed -i 's/pgrx = "=0.12.6"/pgrx = { version = "0.12.9", features = [ "unsafe-postgres" ] }/g' Cargo.toml && \
-    sed -i 's/pgrx-tests = "=0.12.6"/pgrx-tests = "=0.12.9"/g' Cargo.toml && \
-    patch -p1 < /ext-src/pg_graphql.patch
-
-
-FROM rust-extensions-build AS pg_graphql-build
-COPY --from=pg_graphql-src /ext-src/ /ext-src/
-WORKDIR /ext-src/pg_graphql-src
-RUN cargo pgrx install --release && \
-    # it's needed to enable extension because it uses untrusted C language
-    sed -i 's/superuser = false/superuser = true/g' /usr/local/pgsql/share/extension/pg_graphql.control && \
-    echo "trusted = true" >> /usr/local/pgsql/share/extension/pg_graphql.control
-
-#########################################################################################
-#
 # Layer "pg_tiktoken-build"
 # Compile "pg_tiktoken" extension
 #
@@ -1364,7 +1335,6 @@ COPY --from=h3-pg-build /h3/usr /
 COPY --from=postgresql-unit-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgvector-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgjwt-build /usr/local/pgsql/ /usr/local/pgsql/
-COPY --from=pg_graphql-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_tiktoken-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=hypopg-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=online_advisor-build /usr/local/pgsql/ /usr/local/pgsql/
@@ -1529,7 +1499,6 @@ COPY --from=h3-pg-src /ext-src/h3-pg-src /ext-src/h3-pg-src
 COPY --from=postgresql-unit-src /ext-src/ /ext-src/
 COPY --from=pgvector-src /ext-src/ /ext-src/
 COPY --from=pgjwt-src /ext-src/ /ext-src/
-COPY --from=pg_graphql-src /ext-src/ /ext-src/
 #COPY --from=pg_tiktoken-src /ext-src/ /ext-src/
 COPY --from=hypopg-src /ext-src/ /ext-src/
 COPY --from=online_advisor-src /ext-src/ /ext-src/
