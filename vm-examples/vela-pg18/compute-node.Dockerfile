@@ -169,8 +169,6 @@ RUN case $DEBIAN_VERSION in \
 #########################################################################################
 FROM build-deps AS pg-build
 ARG PG_VERSION
-#COPY ./postgres-REL_${PG_VERSION:?} postgres
-COPY ./postgres-REL_18_1 postgres
 RUN case "${PG_VERSION}" in \
     "v18") \
       wget https://github.com/postgres/postgres/archive/refs/tags/REL_18_1.tar.gz -O postgres.tar.gz && \
@@ -1087,42 +1085,7 @@ RUN case "${PG_VERSION:?}" in \
         'v17') \
             echo 'v17 is not supported yet by pgrx. Quit' && exit 0;; \
     esac && \
-    cargo install --locked --version 0.11.3 cargo-pgrx && \
-    /bin/bash -c 'cargo pgrx init --pg${PG_VERSION:1}=/usr/local/pgsql/bin/pg_config'
-
-USER root
-
-#########################################################################################
-#
-# Layer "rust extensions pgrx12"
-#
-# pgrx started to support Postgres 17 since version 12,
-# but some older extension aren't compatible with it.
-# This layer should be used as a base for new pgrx extensions,
-# and eventually get merged with `rust-extensions-build`
-#
-#########################################################################################
-FROM pg-build-with-cargo AS rust-extensions-build-pgrx12
-ARG PG_VERSION
-
-RUN cargo install --locked --version 0.12.9 cargo-pgrx && \
-    /bin/bash -c 'cargo pgrx init --pg${PG_VERSION:1}=/usr/local/pgsql/bin/pg_config'
-
-USER root
-
-#########################################################################################
-#
-# Layer "rust extensions pgrx14"
-#
-# Version 14 is now required by a few
-# This layer should be used as a base for new pgrx extensions,
-# and eventually get merged with `rust-extensions-build`
-#
-#########################################################################################
-FROM pg-build-with-cargo AS rust-extensions-build-pgrx14
-ARG PG_VERSION
-
-RUN cargo install --locked --version 0.14.1 cargo-pgrx && \
+    cargo install --locked --version 0.16.1 cargo-pgrx && \
     /bin/bash -c 'cargo pgrx init --pg${PG_VERSION:1}=/usr/local/pgsql/bin/pg_config'
 
 USER root
@@ -1148,7 +1111,7 @@ RUN wget https://github.com/neondatabase-labs/pgrag/archive/refs/tags/v0.1.2.tar
     echo "7361654ea24f08cbb9db13c2ee1c0fe008f6114076401bb871619690dafc5225 pgrag.tar.gz" | sha256sum --check && \
     mkdir pgrag-src && cd pgrag-src && tar xzf ../pgrag.tar.gz --strip-components=1 -C .
 
-FROM rust-extensions-build-pgrx14 AS pgrag-build
+FROM rust-extensions-build AS pgrag-build
 COPY --from=pgrag-src /ext-src/ /ext-src/
 
 # Install build-time dependencies
@@ -1202,7 +1165,7 @@ RUN wget https://github.com/supabase/pg_jsonschema/archive/refs/tags/v0.3.3.tar.
     echo "40c2cffab4187e0233cb8c3bde013be92218c282f95f4469c5282f6b30d64eac pg_jsonschema.tar.gz" | sha256sum --check && \
     mkdir pg_jsonschema-src && cd pg_jsonschema-src && tar xzf ../pg_jsonschema.tar.gz --strip-components=1 -C .
 
-FROM rust-extensions-build-pgrx12 AS pg_jsonschema-build
+FROM rust-extensions-build AS pg_jsonschema-build
 COPY --from=pg_jsonschema-src /ext-src/ /ext-src/
 WORKDIR /ext-src/pg_jsonschema-src
 RUN \
@@ -1237,7 +1200,7 @@ RUN wget https://github.com/supabase/pg_graphql/archive/refs/tags/v1.5.9.tar.gz 
     patch -p1 < /ext-src/pg_graphql.patch
 
 
-FROM rust-extensions-build-pgrx12 AS pg_graphql-build
+FROM rust-extensions-build AS pg_graphql-build
 COPY --from=pg_graphql-src /ext-src/ /ext-src/
 WORKDIR /ext-src/pg_graphql-src
 RUN cargo pgrx install --release && \
@@ -1264,7 +1227,7 @@ RUN wget https://github.com/kelvich/pg_tiktoken/archive/9118dd4549b7d8c0bbc98e04
     sed -i 's/pgrx = { version = "=0.12.6",/pgrx = { version = "0.12.9",/g' Cargo.toml && \
     sed -i 's/pgrx-tests = "=0.12.6"/pgrx-tests = "0.12.9"/g' Cargo.toml
 
-FROM rust-extensions-build-pgrx12 AS pg_tiktoken-build
+FROM rust-extensions-build AS pg_tiktoken-build
 COPY --from=pg_tiktoken-src /ext-src/ /ext-src/
 WORKDIR /ext-src/pg_tiktoken-src
 RUN cargo pgrx install --release && \
@@ -1325,7 +1288,7 @@ RUN case "${PG_VERSION:?}" in \
     mkdir pgx_ulid-src && cd pgx_ulid-src && tar xzf ../pgx_ulid.tar.gz --strip-components=1 -C . && \
     sed -i 's/pgrx       = "^0.12.7"/pgrx       = { version = "0.12.9", features = [ "unsafe-postgres" ] }/g' Cargo.toml
 
-FROM rust-extensions-build-pgrx12 AS pgx_ulid-pgrx12-build
+FROM rust-extensions-build AS pgx_ulid-pgrx12-build
 ARG PG_VERSION
 WORKDIR /ext-src
 COPY --from=pgx_ulid-pgrx12-src /ext-src/ /ext-src/
@@ -1358,7 +1321,7 @@ RUN wget https://github.com/neondatabase/pg_session_jwt/archive/refs/tags/v0.3.1
     sed -i 's/pgrx-macros = "=0.12.6"/pgrx-macros = "=0.12.9"/g' pgrx-tests/Cargo.toml && \
     sed -i 's/pgrx-pg-config = "=0.12.6"/pgrx-pg-config = "=0.12.9"/g' pgrx-tests/Cargo.toml
 
-FROM rust-extensions-build-pgrx12 AS pg_session_jwt-build
+FROM rust-extensions-build AS pg_session_jwt-build
 COPY --from=pg_session_jwt-src /ext-src/ /ext-src/
 WORKDIR /ext-src/pg_session_jwt-src
 RUN cargo pgrx install --release
@@ -1385,7 +1348,7 @@ RUN wget https://gitlab.com/dalibo/postgresql_anonymizer/-/archive/2.1.0/postgre
     sed -i 's/pgrx = "0.14.1"/pgrx = { version = "=0.14.1", features = [ "unsafe-postgres" ] }/g' Cargo.toml && \
     patch -p1 < /ext-src/anon_v2.patch
 
-FROM rust-extensions-build-pgrx14 AS pg-anon-pg-build
+FROM rust-extensions-build AS pg-anon-pg-build
 ARG PG_VERSION
 COPY --from=pg_anon-src /ext-src/ /ext-src/
 WORKDIR /ext-src
@@ -1504,12 +1467,12 @@ COPY ./patches/duckdb_v120.patch .
 # allow {privileged_role_name} to execute some functions that in pg_duckdb are available to superuser only:
 # - extension management function duckdb.install_extension()
 # - access to duckdb.extensions table and its sequence
-RUN git clone --depth 1 --branch v0.3.1 https://github.com/duckdb/pg_duckdb.git pg_duckdb-src && \
+RUN git clone --depth 1 --branch v1.1.1 https://github.com/duckdb/pg_duckdb.git pg_duckdb-src && \
     cd pg_duckdb-src && \
     git submodule update --init --recursive && \
-    patch -p1 < /ext-src/pg_duckdb_v031.patch && \
-    cd third_party/duckdb && \
-    patch -p1 < /ext-src/duckdb_v120.patch
+    #patch -p1 < /ext-src/pg_duckdb_v031.patch && \
+    cd third_party/duckdb
+    #patch -p1 < /ext-src/duckdb_v120.patch
 
 FROM pg-build AS pg_duckdb-build
 ARG PG_VERSION
