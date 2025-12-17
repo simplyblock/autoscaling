@@ -989,7 +989,7 @@ RUN case "${PG_VERSION:?}" in \
     wget https://github.com/pksunkara/pgx_ulid/archive/refs/tags/v0.2.0.tar.gz -O pgx_ulid.tar.gz && \
     echo "cef6a9a2e5e7bd1a10a18989286586ee9e6c1c06005a4055cff190de41bf3e9f pgx_ulid.tar.gz" | sha256sum --check && \
     mkdir pgx_ulid-src && cd pgx_ulid-src && tar xzf ../pgx_ulid.tar.gz --strip-components=1 -C . && \
-    sed -i 's/pgrx       = "^0.12.7"/pgrx       = { version = "0.12.9", features = [ "unsafe-postgres" ] }/g' Cargo.toml
+    sed -i 's/pgrx       = "^0.12.7"/pgrx       = { version = "0.16.1", features = [ "unsafe-postgres" ] }/g' Cargo.toml
 
 FROM rust-extensions-build AS pgx_ulid-pgrx12-build
 ARG PG_VERSION
