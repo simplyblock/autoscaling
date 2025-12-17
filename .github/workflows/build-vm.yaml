@@ -54,7 +54,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5.10.0
+        uses: docker/metadata-action@v5.10.0  # Explicitly use == 5.10.0, otherwise the action linter reports a false-negative. We should be able to remove this soon.
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
@@ -62,12 +62,5 @@ jobs:
             type=ref,event=pr
             type=sha
 
-      - name: Push to GHCR
-        run: |
-          echo "${{ steps.meta.outputs.tag-names }}" | while IFS= read -r tag_name; do
-            tag=ghcr.io/${{ github.repository }}/vela-vm:${tag_name}
-            echo "Pushing to ${tag}"
-            docker tag vela-img:latest ${tag}
-            docker push ${tag}
-          done
-
+      - name: Create manifest list and push
+        run: docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< '${{ steps.meta.outputs.json }}') vela-img:latest
