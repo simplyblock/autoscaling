@@ -7,22 +7,12 @@ on:
         description: 'Tag to use for the Docker images'
         type: string
         required: true
-      archs:
-        description: 'Architecture to build for'
-        type: string
-        required: false
-        default: '["amd64"]'
   workflow_call:
     inputs:
       tag:
         description: 'Tag to use for the Docker images'
         type: string
         required: true
-      archs:
-        description: 'Architecture to build for'
-        type: string
-        required: false
-        default: '["amd64"]'
     outputs:
       vm-vela:
         value: ${{ jobs.tags.outputs.vm-vela }}
@@ -40,7 +30,7 @@ jobs:
   build:
     strategy:
       matrix:
-        arch: ${{ fromJson(inputs.archs) }}
+        arch: ${{ env.TARGET_ARCH }}
     runs-on: ubuntu-latest
     outputs:
       vm-vela: ${{ steps.tags.outputs.vm-vela }}
@@ -98,9 +88,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha
+
       - name: Push to GHCR
         run: |
-          docker tag ${{ steps.tags.outputs.vm-vela }} ghcr.io/${{ github.repository }}/vela-vm:${{ github.sha }}
-          docker tag ${{ steps.tags.outputs.vm-vela }} ghcr.io/${{ github.repository }}/vela-vm:latest
-          docker push ghcr.io/${{ github.repository }}/vela-vm:${{ github.sha }}
-          docker push ghcr.io/${{ github.repository }}/vela-vm:latest
+          for tag_name in ${{ steps.meta.tag-names }}; do
+            tag=ghcr.io/${{ github.repository }}/vela-vm:${tag_name}
+            docker tag ${{ steps.tags.outputs.vm-vela }} ${tag}
+            docker push ${tag}
+          done
