@@ -2,20 +2,7 @@ name: build-test-vm
 
 on:
   workflow_dispatch: # adds ability to run this manually
-    inputs:
-      tag:
-        description: 'Tag to use for the Docker images'
-        type: string
-        required: true
   workflow_call:
-    inputs:
-      tag:
-        description: 'Tag to use for the Docker images'
-        type: string
-        required: true
-    outputs:
-      vm-vela:
-        value: ${{ jobs.tags.outputs.vm-vela }}
 
 env:
   # using image built in the same workflow
@@ -44,7 +31,7 @@ jobs:
         timeout-minutes: 10
 
       - name: Build daemon image
-        run: make TARGET_ARCH=amd64 docker-build-daemon
+        run: make docker-build-daemon
 
       - run: make bin/vm-builder
 
@@ -58,7 +45,7 @@ jobs:
           ./bin/vm-builder \
               -src alpine:${ALPINE_IMG_TAG}${ALPINE_IMG_SHA} \
               -dst vela-vm \
-              -daemon-image daemon \
+              -daemon-image docker.io/neondatabase/neonvm-daemon \
               -build-arg ALPINE_IMG_TAG=$ALPINE_IMG_TAG \
               -build-arg ALPINE_IMG_SHA=$ALPINE_IMG_SHA \
               -build-arg RUST_IMG_TAG=$RUST_IMG_TAG \
