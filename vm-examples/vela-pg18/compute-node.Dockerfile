@@ -92,7 +92,7 @@ ARG DEBIAN_FLAVOR=${DEBIAN_VERSION}-slim
 #       -I | grep -i docker-content-digest
 # 3. As a next step, TODO(fedordikarev): create script and schedule workflow to run these checks
 #    and updates on regular bases and in automated way.
-ARG BOOKWORM_SLIM_SHA=sha256:40b107342c492725bc7aacbe93a49945445191ae364184a6d24fedb28172f6f7
+ARG BOOKWORM_SLIM_SHA=sha256:e899040a73d36e2b36fa33216943539d9957cba8172b858097c2cabcdb20a3e2
 ARG BULLSEYE_SLIM_SHA=sha256:e831d9a884d63734fe3dd9c491ed9a5a3d4c6a6d32c5b14f2067357c49b0b7e1
 
 # Here we use ${var/search/replace} syntax, to check
@@ -124,8 +124,8 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 # By default, /bin/sh used in debian images will treat '\n' as eol,
 # but as we use bash as SHELL, and built-in echo in bash requires '-e' flag for that.
 RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries && \
-    echo "retry_connrefused = on\ntimeout=15\ntries=5\nretry-on-host-error=on\n" > /root/.wgetrc && \
-    echo "--retry-connrefused\n--connect-timeout 15\n--retry 5\n--max-time 300\n" > /root/.curlrc
+    echo -e "retry_connrefused = on\ntimeout=15\ntries=5\nretry-on-host-error=on\n" > /root/.wgetrc && \
+    echo -e "--retry-connrefused\n--connect-timeout 15\n--retry 5\n--max-time 300\n" > /root/.curlrc
 
 RUN case $DEBIAN_VERSION in \
       # Version-specific installs for Bullseye (PG14-PG16):
@@ -377,7 +377,7 @@ RUN mkdir build && cd build && \
 # Build h3_pg
 #
 #########################################################################################
-FROM build-deps AS h3-pg-src
+FROM postgis-build AS h3-pg-src
 ARG PG_VERSION
 WORKDIR /ext-src
 
@@ -391,8 +391,8 @@ RUN mkdir -p /h3/usr/ && \
 # not version-specific
 # last release v4.1.3 - Jul 26, 2023
 WORKDIR /ext-src
-RUN wget https://github.com/zachasme/h3-pg/archive/refs/tags/v4.1.3.tar.gz -O h3-pg.tar.gz && \
-    echo "5c17f09a820859ffe949f847bebf1be98511fb8f1bd86f94932512c00479e324 h3-pg.tar.gz" | sha256sum --check && \
+RUN wget https://github.com/zachasme/h3-pg/archive/refs/tags/v4.2.3.tar.gz -O h3-pg.tar.gz && \
+    echo "3c420e8ee3324bfeac600cadf3c7a7bc26c3b95e123d48e40459d34dcd714654 h3-pg.tar.gz" | sha256sum --check && \
     mkdir h3-pg-src && cd h3-pg-src && tar xzf ../h3-pg.tar.gz --strip-components=1 -C .
 
 FROM pg-build AS h3-pg-build
@@ -889,7 +889,7 @@ USER nonroot
 WORKDIR /home/nonroot
 
 # See comment on the top of the file regading `echo` and `\n`
-RUN echo "--retry-connrefused\n--connect-timeout 15\n--retry 5\n--max-time 300\n" > /home/nonroot/.curlrc
+RUN echo -e "--retry-connrefused\n--connect-timeout 15\n--retry 5\n--max-time 300\n" > /home/nonroot/.curlrc
 
 RUN curl -sSO https://static.rust-lang.org/rustup/dist/$(uname -m)-unknown-linux-gnu/rustup-init && \
     chmod +x rustup-init && \
@@ -935,38 +935,6 @@ COPY --from=pg_tiktoken-src /ext-src/ /ext-src/
 WORKDIR /ext-src/pg_tiktoken-src
 RUN cargo pgrx install --release && \
     echo "trusted = true" >> /usr/local/pgsql/share/extension/pg_tiktoken.control
-
-#########################################################################################
-#
-# Layer "pgx_ulid-build"
-# Compile "pgx_ulid" extension for v16 and below
-#
-#########################################################################################
-
-FROM build-deps AS pgx_ulid-src
-ARG PG_VERSION
-
-WORKDIR /ext-src
-RUN case "${PG_VERSION:?}" in \
-    "v14" | "v15" | "v16") \
-        ;; \
-    *) \
-        echo "skipping the version of pgx_ulid for $PG_VERSION" && exit 0 \
-        ;; \
-    esac && \
-    wget https://github.com/pksunkara/pgx_ulid/archive/refs/tags/v0.1.5.tar.gz -O pgx_ulid.tar.gz && \
-    echo "9d1659a2da65af0133d5451c454de31b37364e3502087dadf579f790bc8bef17  pgx_ulid.tar.gz" | sha256sum --check && \
-    mkdir pgx_ulid-src && cd pgx_ulid-src && tar xzf ../pgx_ulid.tar.gz --strip-components=1 -C . && \
-    sed -i 's/pgrx       = "^0.11.2"/pgrx = { version = "=0.11.3", features = [ "unsafe-postgres" ] }/g' Cargo.toml
-
-FROM rust-extensions-build AS pgx_ulid-build
-COPY --from=pgx_ulid-src /ext-src/ /ext-src/
-WORKDIR /ext-src/
-RUN if [ -d pgx_ulid-src ]; then \
-        cd pgx_ulid-src && \
-        cargo pgrx install --release && \
-        echo 'trusted = true' >> /usr/local/pgsql/share/extension/ulid.control; \
-    fi
 
 #########################################################################################
 #
@@ -1277,7 +1245,6 @@ COPY --from=plpgsql_check-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=timescaledb-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_hint_plan-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_cron-build /usr/local/pgsql/ /usr/local/pgsql/
-COPY --from=pgx_ulid-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pgx_ulid-pgrx12-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_uuidv7-build /usr/local/pgsql/ /usr/local/pgsql/
 COPY --from=pg_roaringbitmap-build /usr/local/pgsql/ /usr/local/pgsql/
