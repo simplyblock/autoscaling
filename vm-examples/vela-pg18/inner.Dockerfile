@@ -159,7 +159,10 @@ RUN case $DEBIAN_VERSION in \
     && unzip -q protoc.zip -d protoc \
     && mv protoc/bin/protoc /usr/local/bin/protoc \
     && mv protoc/include/google /usr/local/include/google \
-    && rm -rf protoc.zip protoc
+    && rm -rf protoc.zip protoc \
+    && curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash \
+    && \. "$HOME/.nvm/nvm.sh" \
+    && nvm install 24
 
 #########################################################################################
 #
@@ -1192,6 +1195,18 @@ FROM pg-build AS pgauditlogtofile-build
 COPY --from=pgauditlogtofile-src /ext-src/ /ext-src/
 WORKDIR /ext-src/pgauditlogtofile-src
 RUN make install USE_PGXS=1 -j $(getconf _NPROCESSORS_ONLN)
+
+#########################################################################################
+#
+# Layer "postgres-meta src"
+#
+#########################################################################################
+
+FROM build-deps AS postgres-meta-src
+
+RUN wget https://github.com/supabase/postgres-meta/archive/refs/tags/v0.95.1.zip -O postgres-meta.zip && \
+    unzip postgres-meta.zip
+
 
 #########################################################################################
 #
