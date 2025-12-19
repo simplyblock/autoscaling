@@ -123,9 +123,9 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 # By default, /bin/sh used in debian images will treat '\n' as eol,
 # but as we use bash as SHELL, and built-in echo in bash requires '-e' flag for that.
-RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries && \
-    echo "retry_connrefused = on\ntimeout=15\ntries=5\nretry-on-host-error=on\n" > /root/.wgetrc && \
-    echo "--retry-connrefused\n--connect-timeout 15\n--retry 5\n--max-time 300\n" > /root/.curlrc
+RUN echo -e 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries && \
+    echo -e "retry_connrefused = on\ntimeout=15\ntries=5\nretry-on-host-error=on\n" > /root/.wgetrc && \
+    echo -e "--retry-connrefused\n--connect-timeout 15\n--retry 5\n--max-time 300\n" > /root/.curlrc
 
 RUN case $DEBIAN_VERSION in \
       # Version-specific installs for Bullseye (PG14-PG16):
@@ -1304,11 +1304,11 @@ RUN set -e \
 #
 #########################################################################################
 FROM build-deps AS exporters
-ARG TARGETARCH
+ARG TARGET_ARCH
 # Keep sql_exporter version same as in build-tools/Dockerfile and
 # test_runner/regress/test_compute_metrics.py
 # See comment on the top of the file regading `echo`, `-e` and `\n`
-RUN if [ "$TARGETARCH" = "amd64" ]; then\
+RUN if [ "$TARGET_ARCH" = "amd64" ]; then\
         postgres_exporter_sha256='59aa4a7bb0f7d361f5e05732f5ed8c03cc08f78449cef5856eadec33a627694b';\
         pgbouncer_exporter_sha256='c9f7cf8dcff44f0472057e9bf52613d93f3ffbc381ad7547a959daa63c5e84ac';\
         sql_exporter_sha256='9a41127a493e8bfebfe692bf78c7ed2872a58a3f961ee534d1b0da9ae584aaab';\
@@ -1317,11 +1317,11 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then\
         pgbouncer_exporter_sha256='217c4afd7e6492ae904055bc14fe603552cf9bac458c063407e991d68c519da3';\
         sql_exporter_sha256='530e6afc77c043497ed965532c4c9dfa873bc2a4f0b3047fad367715c0081d6a';\
     fi\
-    && curl -sL https://github.com/prometheus-community/postgres_exporter/releases/download/v0.17.1/postgres_exporter-0.17.1.linux-${TARGETARCH}.tar.gz\
+    && curl -sL https://github.com/prometheus-community/postgres_exporter/releases/download/v0.17.1/postgres_exporter-0.17.1.linux-${TARGET_ARCH}.tar.gz \
      | tar xzf - --strip-components=1 -C.\
-    && curl -sL https://github.com/prometheus-community/pgbouncer_exporter/releases/download/v0.10.2/pgbouncer_exporter-0.10.2.linux-${TARGETARCH}.tar.gz\
+    && curl -sL https://github.com/prometheus-community/pgbouncer_exporter/releases/download/v0.10.2/pgbouncer_exporter-0.10.2.linux-${TARGET_ARCH}.tar.gz \
      | tar xzf - --strip-components=1 -C.\
-    && curl -sL https://github.com/burningalchemist/sql_exporter/releases/download/0.17.3/sql_exporter-0.17.3.linux-${TARGETARCH}.tar.gz\
+    && curl -sL https://github.com/burningalchemist/sql_exporter/releases/download/0.17.3/sql_exporter-0.17.3.linux-${TARGET_ARCH}.tar.gz \
      | tar xzf - --strip-components=1 -C.\
     && echo "${postgres_exporter_sha256} postgres_exporter" | sha256sum -c -\
     && echo "${pgbouncer_exporter_sha256} pgbouncer_exporter" | sha256sum -c -\
@@ -1430,6 +1430,7 @@ ENV PG_VERSION=${PG_VERSION:?}
 #########################################################################################
 FROM $BASE_IMAGE_SHA
 ARG DEBIAN_VERSION
+ARG TARGET_ARCH
 
 # Use strict mode for bash to catch errors early
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
@@ -1489,9 +1490,14 @@ RUN apt update && \
         rsyslog-gnutls \
         screen \
         tcpdump \
+        curl \
         $VERSION_INSTALLS && \
     apt clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
     localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8
+
+RUN curl -L -o vector.deb "https://packages.timber.io/vector/0.52.0/vector_0.52.0-1_${TARGET_ARCH}.deb" && \
+    dpkg -i vector.deb && \
+    rm vector.deb
 
 # Add user postgres
 RUN mkdir /var/db && useradd -m -d /var/db/postgres postgres && \
