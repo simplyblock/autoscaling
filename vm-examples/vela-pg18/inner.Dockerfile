@@ -1216,6 +1216,22 @@ RUN wget https://github.com/supabase/postgres-meta/archive/refs/tags/v0.95.1.zip
 
 #########################################################################################
 #
+# Layer "postgrest install"
+#
+#########################################################################################
+
+FROM build-deps AS postgrest-build
+
+ARG TARGET_ARCH
+
+WORKDIR /ext-src
+# Currently, there is no aarch64 precompiled build
+#if [ "${TARGET_ARCH}" == "amd64" ]; then arch="x86-64"; else arch="aarch64"; fi && \
+RUN wget https://github.com/PostgREST/postgrest/releases/download/v14.2/postgrest-v14.2-linux-static-x86-64.tar.xz -O postgrest.tar.xz && \
+    tar xvf postgrest.tar.xz
+
+#########################################################################################
+#
 # Layer "nodejs"
 #
 #########################################################################################
@@ -1560,7 +1576,7 @@ RUN mkdir -p /opt/nodejs
 COPY --from=nodejs-download nodejs/lib /opt/nodejs/lib
 COPY --from=nodejs-download nodejs/bin /opt/nodejs/bin
 
-# postgres-meta
+# postgres-meta install
 ENV PG_META_PORT=8080
 RUN mkdir -p /opt/postgres-meta
 COPY --from=postgres-meta-build /ext-src/postgres-meta/node_modules /opt/postgres-meta/node_modules
@@ -1568,6 +1584,10 @@ COPY --from=postgres-meta-build /ext-src/postgres-meta/dist /opt/postgres-meta/d
 COPY --from=postgres-meta-build /ext-src/postgres-meta/package.json /opt/postgres-meta/package.json
 RUN echo -e "#!/bin/bash\ncd /opt/postgres-meta\n/opt/nodejs/bin/node dist/server/server.js\n" > /opt/postgres-meta/server && \
     chmod +x /opt/postgres-meta/server
+
+# postgrest install
+RUN mkdir -p /opt/postgrest
+COPY --from=postgrest-build /ext-src/postgrest /opt/postgrest/postgrest
 
 # Metrics exporter binaries and configuration files
 COPY --from=exporters ./postgres_exporter /bin/postgres_exporter
