@@ -10,7 +10,7 @@ IMG_AUTOSCALER_AGENT ?= autoscaler-agent:dev
 # It's only used during image builds, so doesn't need to be pushed.
 GO_BASE_IMG ?= autoscaling-go-base:dev
 
-E2E_TESTS_VM_IMG ?= vm-postgres:15-bullseye
+E2E_TESTS_VM_IMG ?= vm-postgres:18.1-trixie
 PG16_DISK_TEST_IMG ?= pg16-disk-test:dev
 
 ## Golang details (for local tooling)
@@ -311,7 +311,7 @@ docker-build-scheduler: docker-build-go-base ## Build docker image for (autoscal
 .PHONY: docker-build-vm-postgres
 docker-build-vm-postgres: bin/vm-builder ## Build docker images for testing VMs
 	./bin/vm-builder \
-		-src postgres:15-bullseye \
+		-src postgres:18.1-trixie \
 		-dst $(E2E_TESTS_VM_IMG) \
 		-build-arg RUST_IMG_TAG=$(RUST_IMG_TAG) \
 		-build-arg RUST_IMG_SHA=$(RUST_IMG_SHA) \
@@ -328,7 +328,7 @@ docker-build-pg16-disk-test: bin/vm-builder ## Build a VM image for testing
 		-build-arg RUST_IMG_TAG=$(RUST_IMG_TAG) \
 		-build-arg RUST_IMG_SHA=$(RUST_IMG_SHA) \
 		-target-arch linux/$(TARGET_ARCH) \
-		-spec vm-examples/pg16-disk-test/image-spec.yaml
+		-spec vm-examples/pg18-disk-test/image-spec.yaml
 
 #.PHONY: docker-push
 #docker-push: ## Push docker image with the controller.

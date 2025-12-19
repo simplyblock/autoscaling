@@ -120,8 +120,8 @@ build: |
           libevent-dev \
           libssl-dev
 
-  ENV PGBOUNCER_VERSION 1.21.0
-  ENV PGBOUNCER_GITPATH 1_21_0
+  ENV PGBOUNCER_VERSION 1.25.1
+  ENV PGBOUNCER_GITPATH 1_25_1
   RUN set -e \
       && curl -sfSL https://github.com/pgbouncer/pgbouncer/releases/download/pgbouncer_${PGBOUNCER_GITPATH}/pgbouncer-${PGBOUNCER_VERSION}.tar.gz -o pgbouncer-${PGBOUNCER_VERSION}.tar.gz \
       && tar xzvf pgbouncer-${PGBOUNCER_VERSION}.tar.gz \
