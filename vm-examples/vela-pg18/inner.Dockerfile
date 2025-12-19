@@ -1202,11 +1202,32 @@ RUN make install USE_PGXS=1 -j $(getconf _NPROCESSORS_ONLN)
 #
 #########################################################################################
 
-FROM build-deps AS postgres-meta-src
+FROM build-deps AS postgres-meta-build
 
+WORKDIR /ext-src
 RUN wget https://github.com/supabase/postgres-meta/archive/refs/tags/v0.95.1.zip -O postgres-meta.zip && \
-    unzip postgres-meta.zip
+    unzip postgres-meta.zip && \
+    mv postgres-meta-0.95.1 postgres-meta && \
+    cd postgres-meta && \
+    \. "$HOME/.nvm/nvm.sh" && \
+    npm clean-install && \
+    npm run build && \
+    npm prune --omit=dev
 
+#########################################################################################
+#
+# Layer "nodejs"
+#
+#########################################################################################
+
+FROM build-deps AS nodejs-download
+
+ARG TARGET_ARCH
+
+RUN if [ "${TARGET_ARCH}" == "amd64" ]; then arch="x64"; else arch="arm64"; fi && \
+    wget https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-${arch}.tar.xz -O nodejs.tar.xz && \
+    tar xvf nodejs.tar.xz && \
+    mv node-v24.12.0-linux-${arch} nodejs
 
 #########################################################################################
 #
@@ -1533,6 +1554,20 @@ COPY --from=pgbouncer         /usr/local/pgbouncer/bin/pgbouncer /usr/local/bin/
 COPY --chmod=0666 --chown=postgres ./etc/pgbouncer.ini /etc/pgbouncer.ini
 
 COPY --from=postgres-cleanup-layer --chown=postgres /usr/local/pgsql /usr/local
+
+# nodejs install
+RUN mkdir -p /opt/nodejs
+COPY --from=nodejs-download nodejs/lib /opt/nodejs/lib
+COPY --from=nodejs-download nodejs/bin /opt/nodejs/bin
+
+# postgres-meta
+ENV PG_META_PORT=8080
+RUN mkdir -p /opt/postgres-meta
+COPY --from=postgres-meta-build /ext-src/postgres-meta/node_modules /opt/postgres-meta/node_modules
+COPY --from=postgres-meta-build /ext-src/postgres-meta/dist /opt/postgres-meta/dist
+COPY --from=postgres-meta-build /ext-src/postgres-meta/package.json /opt/postgres-meta/package.json
+RUN echo -e "#!/bin/bash\ncd /opt/postgres-meta\n/opt/nodejs/bin/node dist/server/server.js\n" > /opt/postgres-meta/server && \
+    chmod +x /opt/postgres-meta/server
 
 # Metrics exporter binaries and configuration files
 COPY --from=exporters ./postgres_exporter /bin/postgres_exporter
