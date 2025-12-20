@@ -148,7 +148,7 @@ RUN case $DEBIAN_VERSION in \
     apt install --no-install-recommends --no-install-suggests -y \
     ninja-build git autoconf automake libtool build-essential bison flex libreadline-dev \
     zlib1g-dev libxml2-dev libcurl4-openssl-dev libossp-uuid-dev wget ca-certificates pkg-config libssl-dev \
-    libicu-dev libxslt1-dev liblz4-dev libzstd-dev zstd curl unzip g++ \
+    libicu-dev libxslt1-dev liblz4-dev libzstd-dev zstd curl unzip g++ python3 \
     libclang-dev \
     jsonnet \
     $VERSION_INSTALLS \
@@ -1216,6 +1216,24 @@ RUN wget https://github.com/supabase/postgres-meta/archive/refs/tags/v0.95.1.zip
 
 #########################################################################################
 #
+# Layer "supabase storage src"
+#
+#########################################################################################
+
+FROM build-deps AS storage-build
+
+WORKDIR /ext-src
+RUN wget https://github.com/supabase/storage/archive/refs/tags/v1.33.2.zip -O storage.zip && \
+    unzip storage.zip && \
+    mv storage-1.33.2 storage && \
+    cd storage && \
+    \. "$HOME/.nvm/nvm.sh" && \
+    npm clean-install && \
+    npm run build && \
+    npm prune --omit=dev
+
+#########################################################################################
+#
 # Layer "postgrest install"
 #
 #########################################################################################
@@ -1584,6 +1602,14 @@ COPY --from=postgres-meta-build /ext-src/postgres-meta/dist /opt/postgres-meta/d
 COPY --from=postgres-meta-build /ext-src/postgres-meta/package.json /opt/postgres-meta/package.json
 RUN echo -e "#!/bin/bash\ncd /opt/postgres-meta\n/opt/nodejs/bin/node dist/server/server.js\n" > /opt/postgres-meta/server && \
     chmod +x /opt/postgres-meta/server
+
+# storage service install
+RUN mkdir -p /opt/storage
+COPY --from=storage-build /ext-src/storage/node_modules /opt/storage/node_modules
+COPY --from=storage-build /ext-src/storage/dist /opt/storage/dist
+COPY --from=storage-build /ext-src/storage/package.json /opt/storage/package.json
+RUN echo -e "#!/bin/bash\ncd /opt/storage\n/opt/nodejs/bin/node dist/start/server.js\n" > /opt/storage/server && \
+    chmod +x /opt/storage/server
 
 # postgrest install
 RUN mkdir -p /opt/postgrest
