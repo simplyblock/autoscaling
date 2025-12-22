@@ -405,6 +405,9 @@ type CPUs struct {
 	Min MilliCPU `json:"min"`
 	Max MilliCPU `json:"max"`
 	Use MilliCPU `json:"use"`
+	// +kubebuilder:default:=1
+	// +optional
+	Limit MilliCPU `json:"limit,omitempty"`
 }
 
 // MilliCPU is a special type to represent vCPUs * 1000

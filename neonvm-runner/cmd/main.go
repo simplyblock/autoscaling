@@ -497,7 +497,7 @@ func runQEMU(
 
 	if !cfg.skipCgroupManagement {
 		var err error
-		cgroupPath, err = setupQEMUCgroup(logger, selfPodName, vmSpec.Guest.CPUs.Use)
+		cgroupPath, err = setupQEMUCgroup(logger, selfPodName, vmSpec.Guest.CPUs.Use, vmSpec.Guest.CPUs.Limit)
 		if err != nil {
 			return err
 		}

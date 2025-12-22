@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	corev1 "k8s.io/api/core/v1"
+	resource "k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -37,7 +38,26 @@ var _ webhook.Defaulter = &VirtualMachine{}
 //
 // The controller wraps this logic so it can inject extra control in the webhook.
 func (r *VirtualMachine) Default() {
-	// Nothing to do.
+	if r.Spec.Guest.CPUs.Limit == 0 {
+		r.Spec.Guest.CPUs.Limit = r.Spec.Guest.CPUs.Max
+	}
+	if r.Spec.Guest.MemorySlots.Limit == 0 {
+		r.Spec.Guest.MemorySlots.Limit = r.Spec.Guest.MemorySlots.Max
+	}
+
+	// Default .spec.podResources if missing
+	if len(r.Spec.PodResources.Limits) == 0 && len(r.Spec.PodResources.Requests) == 0 {
+		r.Spec.PodResources = corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    *r.Spec.Guest.CPUs.Limit.ToResourceQuantity(),
+				corev1.ResourceMemory: *resource.NewQuantity(int64(r.Spec.Guest.MemorySlots.Limit)*r.Spec.Guest.MemorySlotSize.Value(), resource.BinarySI),
+			},
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    *r.Spec.Guest.CPUs.Limit.ToResourceQuantity(),
+				corev1.ResourceMemory: *resource.NewQuantity(int64(r.Spec.Guest.MemorySlots.Limit)*r.Spec.Guest.MemorySlotSize.Value(), resource.BinarySI),
+			},
+		}
+	}
 }
 
 //+kubebuilder:webhook:path=/validate-vm-neon-tech-v1-virtualmachine,mutating=false,failurePolicy=fail,sideEffects=None,groups=vm.neon.tech,resources=virtualmachines,verbs=create;update,versions=v1,name=vvirtualmachine.kb.io,admissionReviewVersions=v1
@@ -57,6 +77,16 @@ func (r *VirtualMachine) ValidateCreate() (admission.Warnings, error) {
 	if r.Spec.Guest.CPUs.Use > r.Spec.Guest.CPUs.Max {
 		return nil, fmt.Errorf(".spec.guest.cpus.use (%v) should be less than or equal to the .spec.guest.cpus.max (%v)",
 			r.Spec.Guest.CPUs.Use,
+			r.Spec.Guest.CPUs.Max)
+	}
+	if r.Spec.Guest.CPUs.Use > r.Spec.Guest.CPUs.Limit {
+		return nil, fmt.Errorf(".spec.guest.cpus.use (%v) should be less than or equal to the .spec.guest.cpus.limit (%v)",
+			r.Spec.Guest.CPUs.Use,
+			r.Spec.Guest.CPUs.Limit)
+	}
+	if r.Spec.Guest.CPUs.Limit > r.Spec.Guest.CPUs.Max {
+		return nil, fmt.Errorf(".spec.guest.cpus.limit (%v) should be less than or equal to the .spec.guest.cpus.max (%v)",
+			r.Spec.Guest.CPUs.Limit,
 			r.Spec.Guest.CPUs.Max)
 	}
 
@@ -175,6 +205,16 @@ func (r *VirtualMachine) ValidateUpdate(old runtime.Object) (admission.Warnings,
 	if r.Spec.Guest.CPUs.Use > r.Spec.Guest.CPUs.Max {
 		return nil, fmt.Errorf(".cpus.use (%v) should be less than or equal to the .cpus.max (%v)",
 			r.Spec.Guest.CPUs.Use,
+			r.Spec.Guest.CPUs.Max)
+	}
+	if r.Spec.Guest.CPUs.Use > r.Spec.Guest.CPUs.Limit {
+		return nil, fmt.Errorf(".cpus.use (%v) should be less than or equal to the .cpus.limit (%v)",
+			r.Spec.Guest.CPUs.Use,
+			r.Spec.Guest.CPUs.Limit)
+	}
+	if r.Spec.Guest.CPUs.Limit > r.Spec.Guest.CPUs.Max {
+		return nil, fmt.Errorf(".cpus.limit (%v) should be less than or equal to the .cpus.max (%v)",
+			r.Spec.Guest.CPUs.Limit,
 			r.Spec.Guest.CPUs.Max)
 	}
 

@@ -5,6 +5,8 @@ import (
 
 	"github.com/samber/lo"
 	"github.com/tychoish/fun/assert"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 func TestFieldsAllowedToChangeFromNilOnly(t *testing.T) {
@@ -70,5 +72,53 @@ func TestFieldsAllowedToChangeFromNilOnly(t *testing.T) {
 			_, err := vm2.ValidateUpdate(defaultVm)
 			assert.Error(t, err)
 		}
+	})
+}
+func TestVirtualMachine_Default(t *testing.T) {
+	t.Run("should set CPUs.Limit to Max if zero", func(t *testing.T) {
+		vm := &VirtualMachine{
+			Spec: VirtualMachineSpec{
+				Guest: Guest{
+					CPUs: CPUs{
+						Min: 1000,
+						Max: 4000,
+						Use: 1000,
+					},
+					MemorySlots: MemorySlots{
+						Min: 1,
+						Max: 4,
+						Use: 1,
+					},
+					MemorySlotSize: resource.MustParse("1Gi"),
+				},
+			},
+		}
+		vm.Default()
+		assert.Equal(t, uint32(vm.Spec.Guest.CPUs.Limit), uint32(4000))
+		assert.Equal(t, vm.Spec.Guest.MemorySlots.Limit, int32(4))
+	})
+
+	t.Run("should populate PodResources if missing", func(t *testing.T) {
+		vm := &VirtualMachine{
+			Spec: VirtualMachineSpec{
+				Guest: Guest{
+					CPUs: CPUs{
+						Min: 1000,
+						Max: 4000,
+						Use: 1000,
+					},
+					MemorySlots: MemorySlots{
+						Min: 1,
+						Max: 4,
+						Use: 1,
+					},
+					MemorySlotSize: resource.MustParse("1Gi"),
+				},
+			},
+		}
+		vm.Default()
+		assert.True(t, len(vm.Spec.PodResources.Limits) > 0)
+		assert.Equal(t, vm.Spec.PodResources.Limits[corev1.ResourceCPU], *resource.NewMilliQuantity(4000, resource.BinarySI))
+		assert.Equal(t, vm.Spec.PodResources.Limits[corev1.ResourceMemory], *resource.NewQuantity(4*1024*1024*1024, resource.BinarySI))
 	})
 }

@@ -34,7 +34,7 @@ const (
 )
 
 // setupQEMUCgroup sets up a cgroup for us to run QEMU in, returning the path of that cgroup
-func setupQEMUCgroup(logger *zap.Logger, selfPodName string, initialCPU vmv1.MilliCPU) (string, error) {
+func setupQEMUCgroup(logger *zap.Logger, selfPodName string, initialCPU vmv1.MilliCPU, limit vmv1.MilliCPU) (string, error) {
 	selfCgroupPath, err := getSelfCgroupPath(logger)
 	if err != nil {
 		return "", fmt.Errorf("failed to get self cgroup path: %w", err)
@@ -53,7 +53,7 @@ func setupQEMUCgroup(logger *zap.Logger, selfPodName string, initialCPU vmv1.Mil
 
 	logger.Info("Determined QEMU cgroup path", zap.String("path", cgroupPath))
 
-	if err := setCgroupLimit(logger, initialCPU, cgroupPath); err != nil {
+	if err := setCgroupLimit(logger, initialCPU, limit, cgroupPath); err != nil {
 		return "", fmt.Errorf("failed to set cgroup limit: %w", err)
 	}
 
@@ -176,8 +176,11 @@ func getSelfCgroupPath(logger *zap.Logger) (string, error) {
 	return "", errors.New(errMsg)
 }
 
-func setCgroupLimit(logger *zap.Logger, r vmv1.MilliCPU, cgroupPath string) error {
+func setCgroupLimit(logger *zap.Logger, r vmv1.MilliCPU, limit vmv1.MilliCPU, cgroupPath string) error {
 	r *= cpuLimitOvercommitFactor
+	if limit > 0 && r > limit {
+		r = limit
+	}
 
 	isV2 := cgroups.Mode() == cgroups.Unified
 	period := cgroupPeriod
