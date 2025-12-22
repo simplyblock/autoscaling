@@ -122,3 +122,62 @@ func TestVirtualMachine_Default(t *testing.T) {
 		assert.Equal(t, vm.Spec.PodResources.Limits[corev1.ResourceMemory], *resource.NewQuantity(4*1024*1024*1024, resource.BinarySI))
 	})
 }
+
+func TestVirtualMachine_ValidateCreate_MemorySlotsLimit(t *testing.T) {
+	vm := &VirtualMachine{
+		Spec: VirtualMachineSpec{
+			Guest: Guest{
+				CPUs: CPUs{
+					Min:   1000,
+					Max:   4000,
+					Use:   1000,
+					Limit: 4000,
+				},
+				MemorySlots: MemorySlots{
+					Min:   4,
+					Max:   8,
+					Use:   6,
+					Limit: 4,
+				},
+				MemorySlotSize: resource.MustParse("1Gi"),
+			},
+		},
+	}
+	_, err := vm.ValidateCreate()
+	assert.NotError(t, err)
+
+	vm.Spec.Guest.MemorySlots.Limit = 3
+	_, err = vm.ValidateCreate()
+	assert.Error(t, err)
+
+	vm.Spec.Guest.MemorySlots.Limit = 5
+	vm.Spec.Guest.MemorySlots.Use = 6
+	_, err = vm.ValidateCreate()
+	assert.Error(t, err)
+}
+
+func TestVirtualMachine_ValidateUpdate_MemorySlotsLimitImmutable(t *testing.T) {
+	oldVM := &VirtualMachine{
+		Spec: VirtualMachineSpec{
+			Guest: Guest{
+				CPUs: CPUs{
+					Min:   1000,
+					Max:   4000,
+					Use:   1000,
+					Limit: 4000,
+				},
+				MemorySlots: MemorySlots{
+					Min:   4,
+					Max:   8,
+					Use:   4,
+					Limit: 6,
+				},
+				MemorySlotSize: resource.MustParse("1Gi"),
+			},
+		},
+	}
+	newVM := oldVM.DeepCopy()
+	newVM.Spec.Guest.MemorySlots.Limit = 7
+	_, err := newVM.ValidateUpdate(oldVM)
+	assert.Error(t, err)
+}

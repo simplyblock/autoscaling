@@ -105,6 +105,21 @@ func (r *VirtualMachine) ValidateCreate() (admission.Warnings, error) {
 			r.Spec.Guest.MemorySlots.Use,
 			r.Spec.Guest.MemorySlots.Max)
 	}
+	if r.Spec.Guest.MemorySlots.Limit < r.Spec.Guest.MemorySlots.Min {
+		return nil, fmt.Errorf(".spec.guest.memorySlots.limit (%d) should be greater than or equal to the .spec.guest.memorySlots.min (%d)",
+			r.Spec.Guest.MemorySlots.Limit,
+			r.Spec.Guest.MemorySlots.Min)
+	}
+	if r.Spec.Guest.MemorySlots.Limit > r.Spec.Guest.MemorySlots.Max {
+		return nil, fmt.Errorf(".spec.guest.memorySlots.limit (%d) should be less than or equal to the .spec.guest.memorySlots.max (%d)",
+			r.Spec.Guest.MemorySlots.Limit,
+			r.Spec.Guest.MemorySlots.Max)
+	}
+	if r.Spec.Guest.MemorySlots.Use > r.Spec.Guest.MemorySlots.Limit {
+		return nil, fmt.Errorf(".spec.guest.memorySlots.use (%d) should be less than or equal to the .spec.guest.memorySlots.limit (%d)",
+			r.Spec.Guest.MemorySlots.Use,
+			r.Spec.Guest.MemorySlots.Limit)
+	}
 
 	// validate .spec.disk names
 	reservedDiskNames := []string{
@@ -156,6 +171,7 @@ func (r *VirtualMachine) ValidateUpdate(old runtime.Object) (admission.Warnings,
 		{".spec.guest.cpus.max", func(v *VirtualMachine) any { return v.Spec.Guest.CPUs.Max }},
 		{".spec.guest.memorySlots.min", func(v *VirtualMachine) any { return v.Spec.Guest.MemorySlots.Min }},
 		{".spec.guest.memorySlots.max", func(v *VirtualMachine) any { return v.Spec.Guest.MemorySlots.Max }},
+		{".spec.guest.memorySlots.limit", func(v *VirtualMachine) any { return v.Spec.Guest.MemorySlots.Limit }},
 		{".spec.guest.ports", func(v *VirtualMachine) any { return v.Spec.Guest.Ports }},
 		{".spec.guest.rootDisk", func(v *VirtualMachine) any { return v.Spec.Guest.RootDisk }},
 		{".spec.guest.command", func(v *VirtualMachine) any { return v.Spec.Guest.Command }},
@@ -228,6 +244,21 @@ func (r *VirtualMachine) ValidateUpdate(old runtime.Object) (admission.Warnings,
 		return nil, fmt.Errorf(".memorySlots.use (%d) should be less than or equal to the .memorySlots.max (%d)",
 			r.Spec.Guest.MemorySlots.Use,
 			r.Spec.Guest.MemorySlots.Max)
+	}
+	if r.Spec.Guest.MemorySlots.Limit < r.Spec.Guest.MemorySlots.Min {
+		return nil, fmt.Errorf(".memorySlots.limit (%d) should be greater than or equal to the .memorySlots.min (%d)",
+			r.Spec.Guest.MemorySlots.Limit,
+			r.Spec.Guest.MemorySlots.Min)
+	}
+	if r.Spec.Guest.MemorySlots.Limit > r.Spec.Guest.MemorySlots.Max {
+		return nil, fmt.Errorf(".memorySlots.limit (%d) should be less than or equal to the .memorySlots.max (%d)",
+			r.Spec.Guest.MemorySlots.Limit,
+			r.Spec.Guest.MemorySlots.Max)
+	}
+	if r.Spec.Guest.MemorySlots.Use > r.Spec.Guest.MemorySlots.Limit {
+		return nil, fmt.Errorf(".memorySlots.use (%d) should be less than or equal to the .memorySlots.limit (%d)",
+			r.Spec.Guest.MemorySlots.Use,
+			r.Spec.Guest.MemorySlots.Limit)
 	}
 
 	if err := validateBlockDevices(r.Spec.Disks); err != nil {
