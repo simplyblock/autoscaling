@@ -90,9 +90,9 @@ func Test_DesiredResourcesFromMetricsOrRequestedUpscaling(t *testing.T) {
 			requestedUpscale:  api.MoreResources{Cpu: false, Memory: false},
 			deniedDownscale:   &api.Resources{VCPU: 1000, Mem: 4 * slotSize},
 
-			expected: api.Resources{VCPU: 1000, Mem: 5 * slotSize},
+			expected: api.Resources{VCPU: 1000, Mem: 4 * slotSize},
 			warnings: []string{
-				"Can't decrease desired resources to within VM maximum because of vm-monitor previously denied downscale request",
+				"Can't decrease desired resources to within VM limit because of vm-monitor previously denied downscale request",
 			},
 		},
 		{
