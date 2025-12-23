@@ -405,6 +405,8 @@ type CPUs struct {
 	Min MilliCPU `json:"min"`
 	Max MilliCPU `json:"max"`
 	Use MilliCPU `json:"use"`
+	// Limit is the current soft limit of CPUs available.
+	Limit MilliCPU `json:"limit"`
 }
 
 // MilliCPU is a special type to represent vCPUs * 1000

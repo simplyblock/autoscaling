@@ -59,6 +59,23 @@ func (r *VirtualMachine) ValidateCreate() (admission.Warnings, error) {
 			r.Spec.Guest.CPUs.Use,
 			r.Spec.Guest.CPUs.Max)
 	}
+	if r.Spec.Guest.CPUs.Limit != 0 {
+		if r.Spec.Guest.CPUs.Limit < r.Spec.Guest.CPUs.Min {
+			return nil, fmt.Errorf(".spec.guest.cpus.limit (%v) should be greater than or equal to the .spec.guest.cpus.min (%v)",
+				r.Spec.Guest.CPUs.Limit,
+				r.Spec.Guest.CPUs.Min)
+		}
+		if r.Spec.Guest.CPUs.Limit > r.Spec.Guest.CPUs.Max {
+			return nil, fmt.Errorf(".spec.guest.cpus.limit (%v) should be less than or equal to the .spec.guest.cpus.max (%v)",
+				r.Spec.Guest.CPUs.Limit,
+				r.Spec.Guest.CPUs.Max)
+		}
+		if r.Spec.Guest.CPUs.Use > r.Spec.Guest.CPUs.Limit {
+			return nil, fmt.Errorf(".spec.guest.cpus.use (%v) should be less than or equal to the .spec.guest.cpus.limit (%v)",
+				r.Spec.Guest.CPUs.Use,
+				r.Spec.Guest.CPUs.Limit)
+		}
+	}
 
 	if err := r.Spec.Guest.ValidateMemorySize(); err != nil {
 		return nil, fmt.Errorf(".spec.guest: %w", err)
@@ -176,6 +193,23 @@ func (r *VirtualMachine) ValidateUpdate(old runtime.Object) (admission.Warnings,
 		return nil, fmt.Errorf(".cpus.use (%v) should be less than or equal to the .cpus.max (%v)",
 			r.Spec.Guest.CPUs.Use,
 			r.Spec.Guest.CPUs.Max)
+	}
+	if r.Spec.Guest.CPUs.Limit != 0 {
+		if r.Spec.Guest.CPUs.Limit < r.Spec.Guest.CPUs.Min {
+			return nil, fmt.Errorf(".cpus.limit (%v) should be greater than or equal to the .cpus.min (%v)",
+				r.Spec.Guest.CPUs.Limit,
+				r.Spec.Guest.CPUs.Min)
+		}
+		if r.Spec.Guest.CPUs.Limit > r.Spec.Guest.CPUs.Max {
+			return nil, fmt.Errorf(".cpus.limit (%v) should be less than or equal to the .cpus.max (%v)",
+				r.Spec.Guest.CPUs.Limit,
+				r.Spec.Guest.CPUs.Max)
+		}
+		if r.Spec.Guest.CPUs.Use > r.Spec.Guest.CPUs.Limit {
+			return nil, fmt.Errorf(".cpus.use (%v) should be less than or equal to the .cpus.limit (%v)",
+				r.Spec.Guest.CPUs.Use,
+				r.Spec.Guest.CPUs.Limit)
+		}
 	}
 
 	// validate .spec.guest.memorySlots.use
