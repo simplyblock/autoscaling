@@ -811,8 +811,9 @@ func (s *state) desiredResourcesFromMetricsOrRequestedUpscaling(now time.Time) (
 		goalResources = goalResources.Max(s.VM.Using())
 	}
 
-	// bound goalResources by the minimum and maximum resource amounts for the VM
-	result := goalResources.Min(s.VM.Max()).Max(s.VM.Min())
+	// bound goalResources by the minimum and limiting resource amounts for the VM
+	upperBound := s.VM.Limiting()
+	result := goalResources.Min(upperBound).Max(s.VM.Min())
 
 	// ... but if we aren't allowed to downscale, then we *must* make sure that the VM's usage value
 	// won't decrease to the previously denied amount, even if it's greater than the maximum.
@@ -825,9 +826,9 @@ func (s *state) desiredResourcesFromMetricsOrRequestedUpscaling(now time.Time) (
 	if deniedDownscaleInEffect {
 		// roughly equivalent to "result >= s.monitor.deniedDownscale.requested"
 		if !result.HasFieldGreaterThan(s.Monitor.DeniedDownscale.Requested) {
-			// This can only happen if s.vm.Max() is less than goalResources, because otherwise this
+			// This can only happen if the VM limit is less than goalResources, because otherwise this
 			// would have been factored into goalCU, affecting goalResources. Hence, the warning.
-			s.warn("Can't decrease desired resources to within VM maximum because of vm-monitor previously denied downscale request")
+			s.warn("Can't decrease desired resources to within VM limit because of vm-monitor previously denied downscale request")
 		}
 		preMaxResult := result
 		result = result.Max(s.minRequiredResourcesForDeniedDownscale(s.Config.ComputeUnit, *s.Monitor.DeniedDownscale))
@@ -835,14 +836,17 @@ func (s *state) desiredResourcesFromMetricsOrRequestedUpscaling(now time.Time) (
 			deniedDownscaleAffectedResult = true
 		}
 	}
+	if result.HasFieldGreaterThan(upperBound) {
+		result = result.Min(upperBound)
+	}
 
 	// Check that the result is sound.
 	//
 	// With the current (naive) implementation, this is trivially ok. In future versions, it might
 	// not be so simple, so it's good to have this integrity check here.
-	if !deniedDownscaleAffectedResult && result.HasFieldGreaterThan(s.VM.Max()) {
+	if !deniedDownscaleAffectedResult && result.HasFieldGreaterThan(upperBound) {
 		panic(fmt.Errorf(
-			"produced invalid desired state: result has field greater than max. this = %+v", *s,
+			"produced invalid desired state: result has field greater than limit. this = %+v", *s,
 		))
 	} else if result.HasFieldLessThan(s.VM.Min()) {
 		panic(fmt.Errorf(
