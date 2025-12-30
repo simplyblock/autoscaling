@@ -17,6 +17,10 @@ commands:
     user: root
     sysvInitAction: respawn
     shell: 'cat /tmp/neon-logs.fifo > /dev/virtio-ports/tech.neon.log.0'
+  - name: pgbouncer
+    user: nobody
+    sysvInitAction: respawn
+    shell: '/usr/local/bin/pgbouncer /etc/pgbouncer.ini'
   - name: postgres-exporter
     user: nobody
     sysvInitAction: respawn
@@ -32,6 +36,22 @@ commands:
 files:
   - filename: cgconfig.conf
     hostPath: cgconfig.conf
+  - filename: pgbouncer.ini
+    content: |
+      [databases]
+      *=host=localhost port=5432 auth_user=cloud_admin
+      [pgbouncer]
+      listen_port=6432
+      listen_addr=0.0.0.0
+      auth_type=scram-sha-256
+      auth_user=cloud_admin
+      auth_dbname=postgres
+      client_tls_sslmode=disable
+      server_tls_sslmode=disable
+      pool_mode=transaction
+      max_client_conn=10000
+      default_pool_size=16
+      max_prepared_statements=0
   - filename: secrets-to-env
     hostPath: secrets-to-env
 build: |
@@ -62,12 +82,40 @@ build: |
 
   FROM quay.io/prometheuscommunity/postgres-exporter:v0.12.0@sha256:f34d50a64a4d558ad118ffc73be45a359ac8f30b8daba4b241458bcb9f94e254 AS postgres-exporter
 
+  # Build pgbouncer
+  #
+  FROM debian:bullseye-slim@sha256:33b7c2e071c29e618182ec872c471f39d2dde3d8904d95f5b7a61acf3a592e7b AS pgbouncer
+  RUN set -e \
+      && apt-get update \
+      && apt-get install -y \
+          curl \
+          build-essential \
+          pkg-config \
+          libevent-dev \
+          libssl-dev
+
+  ENV PGBOUNCER_VERSION 1.21.0
+  ENV PGBOUNCER_GITPATH 1_21_0
+  RUN set -e \
+      && curl -sfSL https://github.com/pgbouncer/pgbouncer/releases/download/pgbouncer_${PGBOUNCER_GITPATH}/pgbouncer-${PGBOUNCER_VERSION}.tar.gz -o pgbouncer-${PGBOUNCER_VERSION}.tar.gz \
+      && tar xzvf pgbouncer-${PGBOUNCER_VERSION}.tar.gz \
+      && cd pgbouncer-${PGBOUNCER_VERSION} \
+      && LDFLAGS=-static ./configure --prefix=/usr/local/pgbouncer --without-openssl \
+      && make -j $(nproc) \
+      && make install
+
 merge: |
   RUN adduser vm-monitor --disabled-password --no-create-home
 
   COPY cgconfig.conf         /etc/cgconfig.conf
+  COPY pgbouncer.ini /etc/pgbouncer.ini
   COPY secrets-to-env      /usr/local/bin/secrets-to-env
   RUN chmod +x /usr/local/bin/secrets-to-env
+
+  RUN set -e \
+        && chown postgres:postgres /etc/pgbouncer.ini \
+        && chmod 0644 /etc/pgbouncer.ini \
+        && chmod 0644 /etc/cgconfig.conf
 
   # General tools
   RUN set -e \
@@ -83,6 +131,7 @@ merge: |
 
   COPY --from=monitor-builder       /workspace/bin/vm-monitor /bin/vm-monitor
   COPY --from=postgres-exporter /bin/postgres_exporter /bin/postgres_exporter
+  COPY --from=pgbouncer         /usr/local/pgbouncer/bin/pgbouncer /usr/local/bin/pgbouncer
 
   # set the greeting message on ssh logins
   RUN echo -e 'Welcome to Alpine!\n ~ This is the VM :) ~' >/etc/motd
