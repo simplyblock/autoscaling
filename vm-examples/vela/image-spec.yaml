@@ -17,6 +17,10 @@ commands:
     user: root
     sysvInitAction: respawn
     shell: 'cat /tmp/neon-logs.fifo > /dev/virtio-ports/tech.neon.log.0'
+  - name: postgres-exporter
+    user: nobody
+    sysvInitAction: respawn
+    shell: 'DATA_SOURCE_NAME="user=cloud_admin sslmode=disable dbname=postgres" /bin/postgres_exporter'
   - name: secrets
     user: root
     sysvInitAction: once
@@ -56,6 +60,8 @@ build: |
   # Cargo clean dramatically reduces the size of the image
   RUN cargo clean --release --manifest-path neon/libs/vm_monitor/Cargo.toml
 
+  FROM quay.io/prometheuscommunity/postgres-exporter:v0.12.0@sha256:f34d50a64a4d558ad118ffc73be45a359ac8f30b8daba4b241458bcb9f94e254 AS postgres-exporter
+
 merge: |
   RUN adduser vm-monitor --disabled-password --no-create-home
 
@@ -76,6 +82,7 @@ merge: |
   RUN set -e && pip3 install --break-system-packages --no-cache-dir podman-compose
 
   COPY --from=monitor-builder       /workspace/bin/vm-monitor /bin/vm-monitor
+  COPY --from=postgres-exporter /bin/postgres_exporter /bin/postgres_exporter
 
   # set the greeting message on ssh logins
   RUN echo -e 'Welcome to Alpine!\n ~ This is the VM :) ~' >/etc/motd
