@@ -1,8 +1,8 @@
 # Autoscaling
 
-Vertical autoscaling for a fleet of postgres instances running in a Kubernetes cluster.
+Vertical autoscaling for a fleet of Postgres instances running in a Kubernetes cluster.
 
-For more on how Neon's Autoscaling works, check out <https://neon.tech/docs/introduction/autoscaling>.
+This repository contains a simplyblock-managed fork of Neon's Autoscaling!
 
 ## Development status
 
