@@ -97,13 +97,16 @@ type VmCpuInfo struct {
 	Min vmv1.MilliCPU `json:"min"`
 	Max vmv1.MilliCPU `json:"max"`
 	Use vmv1.MilliCPU `json:"use"`
+	// Limit is the current soft limit of CPUs available.
+	Limit vmv1.MilliCPU `json:"limit"`
 }
 
 func NewVmCpuInfo(cpus vmv1.CPUs) VmCpuInfo {
 	return VmCpuInfo{
-		Min: cpus.Min,
-		Max: cpus.Max,
-		Use: cpus.Use,
+		Min:   cpus.Min,
+		Max:   cpus.Max,
+		Use:   cpus.Use,
+		Limit: cpus.Limit,
 	}
 }
 
@@ -181,13 +184,17 @@ func (vm VmInfo) Max() Resources {
 
 // Limiting returns the Resources that this VmInfo says the VM is currently allowed to use
 func (vm VmInfo) Limiting() Resources {
-	limit := vm.Mem.Limit
-	if limit == 0 {
-		limit = vm.Mem.Max
+	cpuLimit := vm.Cpu.Limit
+	if cpuLimit == 0 {
+		cpuLimit = vm.Cpu.Max
+	}
+	memLimit := vm.Mem.Limit
+	if memLimit == 0 {
+		memLimit = vm.Mem.Max
 	}
 	return Resources{
-		VCPU: vm.Cpu.Max,
-		Mem:  vm.Mem.SlotSize * Bytes(limit),
+		VCPU: cpuLimit,
+		Mem:  vm.Mem.SlotSize * Bytes(memLimit),
 	}
 }
 

@@ -70,9 +70,10 @@ func CreateVmInfo(config InitialVmInfoConfig, opts ...VmInfoOpt) api.VmInfo {
 		Name:      "test",
 		Namespace: "test",
 		Cpu: api.VmCpuInfo{
-			Min: vmv1.MilliCPU(config.MinCU) * config.ComputeUnit.VCPU,
-			Use: vmv1.MilliCPU(config.MinCU) * config.ComputeUnit.VCPU,
-			Max: vmv1.MilliCPU(config.MaxCU) * config.ComputeUnit.VCPU,
+			Min:   vmv1.MilliCPU(config.MinCU) * config.ComputeUnit.VCPU,
+			Use:   vmv1.MilliCPU(config.MinCU) * config.ComputeUnit.VCPU,
+			Max:   vmv1.MilliCPU(config.MaxCU) * config.ComputeUnit.VCPU,
+			Limit: vmv1.MilliCPU(config.MaxCU) * config.ComputeUnit.VCPU,
 		},
 		Mem: api.VmMemInfo{
 			SlotSize: config.MemorySlotSize,

@@ -212,9 +212,10 @@ func Test_DesiredResourcesFromMetricsOrRequestedUpscaling(t *testing.T) {
 				Name:      "test",
 				Namespace: "test",
 				Cpu: api.VmCpuInfo{
-					Min: 250,
-					Use: c.vmUsing.VCPU,
-					Max: 1000,
+					Min:   250,
+					Use:   c.vmUsing.VCPU,
+					Max:   1000,
+					Limit: 1000,
 				},
 				Mem: api.VmMemInfo{
 					SlotSize: slotSize,
