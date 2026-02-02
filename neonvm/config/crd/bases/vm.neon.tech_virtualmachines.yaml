@@ -2760,7 +2760,6 @@ spec:
                         type: integer
                         x-kubernetes-int-or-string: true
                     required:
-                    - limit
                     - max
                     - min
                     - use

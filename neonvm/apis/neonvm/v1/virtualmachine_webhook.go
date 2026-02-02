@@ -37,7 +37,10 @@ var _ webhook.Defaulter = &VirtualMachine{}
 //
 // The controller wraps this logic so it can inject extra control in the webhook.
 func (r *VirtualMachine) Default() {
-	// Nothing to do.
+	// Default CPU limit to the desired `use` value when unset/zero, so users can omit it.
+	if r.Spec.Guest.CPUs.Limit == 0 {
+		r.Spec.Guest.CPUs.Limit = r.Spec.Guest.CPUs.Use
+	}
 }
 
 //+kubebuilder:webhook:path=/validate-vm-neon-tech-v1-virtualmachine,mutating=false,failurePolicy=fail,sideEffects=None,groups=vm.neon.tech,resources=virtualmachines,verbs=create;update,versions=v1,name=vvirtualmachine.kb.io,admissionReviewVersions=v1
