@@ -1,0 +1,90 @@
+name: push-ghcr-images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Image tag to use (e.g. dev6fv6)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  build-and-push:
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        include:
+          - image_name: neonvm-controller
+            make_target: docker-build-controller
+            env_var: IMG_CONTROLLER
+          - image_name: neonvm-runner
+            make_target: docker-build-runner
+            env_var: IMG_RUNNER
+          - image_name: autoscale-scheduler
+            make_target: docker-build-scheduler
+            env_var: IMG_SCHEDULER
+          - image_name: autoscaler-agent
+            make_target: docker-build-autoscaler-agent
+            env_var: IMG_AUTOSCALER_AGENT
+          - image_name: neonvm-vxlan-controller
+            make_target: docker-build-vxlan-controller
+            env_var: IMG_VXLAN_CONTROLLER
+
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.11.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Log in to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: meta
+        uses: docker/metadata-action@v5.10.0
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ matrix.image_name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix=main-,format=short
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Show target tags
+        run: |
+          echo "Image: ghcr.io/${GITHUB_REPOSITORY}/${{ matrix.image_name }}"
+          echo "Tags:"
+          echo '${{ steps.meta.outputs.tags }}'
+
+      - name: Build image
+        run: |
+          PRIMARY_TAG="$(echo '${{ steps.meta.outputs.tags }}' | head -n1)"
+          make ${{ matrix.make_target }} ${{ matrix.env_var }}="$PRIMARY_TAG"
+          echo '${{ steps.meta.outputs.tags }}' | tail -n +2 | while read -r tag; do
+            [[ -z "$tag" ]] && continue
+            docker tag "$PRIMARY_TAG" "$tag"
+          done
+
+      - name: Push image
+        run: |
+          echo '${{ steps.meta.outputs.tags }}' | while read -r tag; do
+            [[ -z "$tag" ]] && continue
+            docker push "$tag"
+          done
