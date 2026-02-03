@@ -18,8 +18,49 @@ defaults:
   run:
     shell: bash -euo pipefail {0}
 
+env:
+  TARGET_ARCH: amd64
+  HOST_ARCH: amd64
+  GOOS: linux
+
 jobs:
+  prepare-runner-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.11.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Build kernel for runner
+        env:
+          TARGET_ARCH: ${{ env.TARGET_ARCH }}
+          HOST_ARCH: ${{ env.HOST_ARCH }}
+        run: make kernel TARGET_ARCH=$TARGET_ARCH HOST_ARCH=$HOST_ARCH
+
+      - name: Download firmware and prebuild runner image
+        env:
+          TARGET_ARCH: ${{ env.TARGET_ARCH }}
+          GOOS: ${{ env.GOOS }}
+        run: |
+          make download-qemu-bios TARGET_ARCH=$TARGET_ARCH GOOS=$GOOS
+          mkdir -p neonvm-runner/external-firmware/${TARGET_ARCH}-${GOOS}
+          make docker-build-runner TARGET_ARCH=$TARGET_ARCH GOOS=$GOOS
+
+      - name: Upload runner prerequisites
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: runner-prereqs-${{ env.TARGET_ARCH }}
+          path: |
+            neonvm-kernel/vmlinuz-${{ env.TARGET_ARCH }}
+            neonvm-runner/external-firmware/${{ env.TARGET_ARCH }}-${{ env.GOOS }}
+          if-no-files-found: error
+
   build-and-push:
+    needs: prepare-runner-assets
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -48,6 +89,12 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download runner prerequisites
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          name: runner-prereqs-${{ env.TARGET_ARCH }}
+          path: .
 
       - name: Log in to GHCR
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
