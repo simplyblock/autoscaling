@@ -105,16 +105,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Compute tags
         id: meta
         uses: docker/metadata-action@v5.10.0
         with:
-          images: ghcr.io/${{ github.repository }}/${{ matrix.image_name }}
+          images: |
+            ghcr.io/${{ github.repository }}/${{ matrix.image_name }}
+            docker.io/simplyblock/autoscaling
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix=main-,format=short
-            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=ref,event=branch,prefix=${{ matrix.image_name }}-
+            type=ref,event=pr,prefix=${{ matrix.image_name }}-
+            type=sha,prefix=${{ matrix.image_name }}-main-,format=short
+            type=raw,value=${{ inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }},prefix=${{ matrix.image_name }}-
 
       - name: Show target tags
         run: |
