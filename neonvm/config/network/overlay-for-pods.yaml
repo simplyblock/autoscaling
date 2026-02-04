@@ -11,8 +11,8 @@ spec:
     "bridge": "neon-br0",
     "ipam": {
       "type": "whereabouts",
-      "range": "10.100.0.0/16",
-      "range_start": "10.100.1.0",
-      "range_end": "10.100.127.255"
+      "range": "10.200.0.0/16",
+      "range_start": "10.200.1.0",
+      "range_end": "10.200.127.255"
     }
   }'

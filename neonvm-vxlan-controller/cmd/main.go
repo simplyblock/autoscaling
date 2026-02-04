@@ -30,7 +30,7 @@ const (
 
 	// iptables settings details
 	iptablesChainName = "NEON-EXTRANET"
-	extraNetCidr      = "10.100.0.0/16"
+	extraNetCidr      = "10.200.0.0/16"
 )
 
 var deleteIfaces = flag.Bool("delete", false, `delete VXLAN interfaces`)
@@ -358,10 +358,10 @@ func configureBridgeIP(bridgeName string, nodeIP string) error {
 		log.Printf("warning: node IP %s is not a standard IPv4 address", nodeIP)
 	}
 
-	// Strategy: Use 10.100.255.<last_octet>/16
-	// This ensures it falls into the free upper range of the 10.100.0.0/16 subnet
+	// Strategy: Use 10.200.255.<last_octet>/16
+	// This ensures it falls into the free upper range of the 10.200.0.0/16 subnet
 	lastOctet := ipv4[3]
-	newIP := fmt.Sprintf("10.100.255.%d/16", lastOctet)
+	newIP := fmt.Sprintf("10.200.255.%d/16", lastOctet)
 
 	log.Printf("calculating overlay IP: %s (derived from %s)", newIP, nodeIP)
 

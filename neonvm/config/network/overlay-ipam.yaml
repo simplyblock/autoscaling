@@ -9,8 +9,8 @@ spec:
       "network_name": "neonvm",
       "ipRanges": [
         {
-          "range": "10.100.0.0/16",
-          "range_start": "10.100.128.0"
+          "range": "10.200.0.0/16",
+          "range_start": "10.200.128.0"
         }
       ]
     }
