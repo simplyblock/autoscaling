@@ -148,26 +148,9 @@ func createBrigeInterface(name string) error {
 		}
 	}
 
-	// Disable bridge-nf-call-iptables for this bridge.
-	// We check for the global sysctl first because disabling it per-bridge via 'ip link' (as tried below)
-	// might not be sufficient if the global setting overrides it or if br_netfilter is quirky.
-	// Note: This requires the pod to be running in PRIVILEGED mode to write to /proc/sys.
-	sysctlCmd := exec.Command("sysctl", "-w", "net.bridge.bridge-nf-call-iptables=0")
-	if out, err := sysctlCmd.CombinedOutput(); err != nil {
-		log.Printf("warning: failed to disable global bridge-nf-call-iptables: %v, output: %s", err, string(out))
-	}
-
-	// We also try the 'ip link' method as a fallback or supplement
-	cmd := exec.Command("ip", "link", "set", "dev", name, "type", "bridge", "nf_call_iptables", "0", "nf_call_ip6tables", "0", "nf_call_arptables", "0")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		log.Printf("warning: failed to disable bridge-nf on %s: %v, output: %s", name, err, string(out))
-	}
-
-	// Disable offloading on the bridge interface itself.
-	// This helps avoid issues where the bridge advertises capabilities that the underlying VXLAN device lacks.
-	ethCmd := exec.Command("ethtool", "-K", name, "tx", "off", "rx", "off", "tso", "off", "gso", "off", "gro", "off", "lro", "off")
-	if out, err := ethCmd.CombinedOutput(); err != nil {
-		log.Printf("warning: failed to disable offloading on %s: %v, output: %s", name, err, string(out))
+	// Apply critical network settings (bridge-nf, offloading)
+	if err := applyBridgeNetworkSettings(name); err != nil {
+		log.Printf("warning: failed to apply bridge settings: %v", err)
 	}
 
 	if err := netlink.LinkSetUp(link); err != nil {
@@ -191,8 +174,8 @@ func createVxlanInterface(name string, vxlanID int, ownIP string, bridgeName str
 		// create an configure vxlan
 		link = &netlink.Vxlan{
 			LinkAttrs: netlink.LinkAttrs{
-				Name:    name,
-				MTU:     1410, // Adjust MTU to account for VXLAN overhead on 1460 host MTU
+				Name: name,
+				MTU:  1410, // Adjust MTU to account for VXLAN overhead on 1460 host MTU
 			},
 			VxlanId:  vxlanID,
 			SrcAddr:  net.ParseIP(ownIP),
@@ -223,12 +206,9 @@ func createVxlanInterface(name string, vxlanID int, ownIP string, bridgeName str
 		return err
 	}
 
-	// Disable offloading that might interfere with VXLAN
-	// IMPORTANT: We apply this even if the interface already exists to ensure settings are correct.
-	// ethtool -K neon-vxlan0 tx off rx off tso off gso off gro off lro off
-	cmd := exec.Command("ethtool", "-K", name, "tx", "off", "rx", "off", "tso", "off", "gso", "off", "gro", "off", "lro", "off")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		log.Printf("warning: failed to disable offloading on %s: %v, output: %s", name, err, string(out))
+	// Disable offloading (vxlan specific)
+	if err := disableNicOffloading(name); err != nil {
+		log.Printf("warning: failed to disable offloading on %s: %v", name, err)
 	}
 
 	return nil
@@ -401,5 +381,26 @@ func configureBridgeIP(bridgeName string, nodeIP string) error {
 		return err
 	}
 
+	return nil
+}
+
+func applyBridgeNetworkSettings(name string) error {
+	// 1. Disable global bridge-nf-call-iptables via sysctl (Requires Privileged mode)
+	// This prevents bridged IP traffic from being dropped by host iptables.
+	if out, err := exec.Command("sysctl", "-w", "net.bridge.bridge-nf-call-iptables=0").CombinedOutput(); err != nil {
+		log.Printf("warning: failed to disable global bridge-nf: %v, output: %s", err, string(out))
+	}
+
+	// 2. Disable offloading on the bridge interface
+	// Prevents checksum/segmentation offload issues on the virtual bridge.
+	return disableNicOffloading(name)
+}
+
+func disableNicOffloading(name string) error {
+	// Disables TX/RX checksumming and segmentation offloads
+	cmd := exec.Command("ethtool", "-K", name, "tx", "off", "rx", "off", "tso", "off", "gso", "off", "gro", "off", "lro", "off")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("ethtool failed: %w, output: %s", err, string(out))
+	}
 	return nil
 }
