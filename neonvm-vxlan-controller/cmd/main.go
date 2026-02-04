@@ -385,10 +385,12 @@ func configureBridgeIP(bridgeName string, nodeIP string) error {
 }
 
 func applyBridgeNetworkSettings(name string) error {
-	// 1. Disable global bridge-nf-call-iptables via sysctl (Requires Privileged mode)
-	// This prevents bridged IP traffic from being dropped by host iptables.
-	if out, err := exec.Command("sysctl", "-w", "net.bridge.bridge-nf-call-iptables=0").CombinedOutput(); err != nil {
-		log.Printf("warning: failed to disable global bridge-nf: %v, output: %s", err, string(out))
+	// 1. Attempt to disable bridge-nf on this specific bridge via ip link attributes.
+	// This is the safer, localized way to prevent iptables interaction, though it might not work on all kernels.
+	// We DO NOT disable the global sysctl as that breaks cluster CNIs (like Flannel) that rely on it.
+	cmd := exec.Command("ip", "link", "set", "dev", name, "type", "bridge", "nf_call_iptables", "0", "nf_call_ip6tables", "0", "nf_call_arptables", "0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("warning: failed to disable localized bridge-nf on %s: %v, output: %s", name, err, string(out))
 	}
 
 	// 2. Disable offloading on the bridge interface
