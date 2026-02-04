@@ -128,30 +128,31 @@ func getNodesIPs(clientset *kubernetes.Clientset) ([]string, error) {
 
 func createBrigeInterface(name string) error {
 	// check if interface already exists
-	_, err := netlink.LinkByName(name)
+	link, err := netlink.LinkByName(name)
 	if err == nil {
-		log.Printf("link with name %s already found", name)
-		return nil
-	}
-	_, notFound := err.(netlink.LinkNotFoundError) //nolint:errorlint // errors.Is doesn't work, we actually just want to know the type.
-	if !notFound {
-		return err
-	}
+		log.Printf("link with name %s already found, applying settings", name)
+	} else {
+		_, notFound := err.(netlink.LinkNotFoundError) //nolint:errorlint // errors.Is doesn't work, we actually just want to know the type.
+		if !notFound {
+			return err
+		}
 
-	// create an configure linux bridge
-	link := &netlink.Bridge{
-		LinkAttrs: netlink.LinkAttrs{
-			Name: name,
-		},
-	}
-	if err := netlink.LinkAdd(link); err != nil {
-		return err
+		// create an configure linux bridge
+		link = &netlink.Bridge{
+			LinkAttrs: netlink.LinkAttrs{
+				Name: name,
+			},
+		}
+		if err := netlink.LinkAdd(link); err != nil {
+			return err
+		}
 	}
 
 	// Disable bridge-nf-call-iptables for this bridge.
 	// This ensures that bridged IP packets are not subjected to host iptables rules,
 	// which can cause drops or misrouting in some environments (like Talos).
 	// We use the 'ip link' command as netlink.Bridge doesn't expose these options directly.
+	// IMPORTANT: We apply this even if the bridge already exists to ensure settings are correct.
 	cmd := exec.Command("ip", "link", "set", "dev", name, "type", "bridge", "nf_call_iptables", "0", "nf_call_ip6tables", "0", "nf_call_arptables", "0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("warning: failed to disable bridge-nf on %s: %v, output: %s", name, err, string(out))
@@ -166,39 +167,44 @@ func createBrigeInterface(name string) error {
 
 func createVxlanInterface(name string, vxlanID int, ownIP string, bridgeName string) error {
 	// check if interface already exists
-	_, err := netlink.LinkByName(name)
+	link, err := netlink.LinkByName(name)
 	if err == nil {
-		log.Printf("link with name %s already found", name)
-		return nil
-	}
-	_, notFound := err.(netlink.LinkNotFoundError) //nolint:errorlint // errors.Is doesn't work, we actually just want to know the type.
-	if !notFound {
-		return err
+		log.Printf("link with name %s already found, applying settings", name)
+	} else {
+		_, notFound := err.(netlink.LinkNotFoundError) //nolint:errorlint // errors.Is doesn't work, we actually just want to know the type.
+		if !notFound {
+			return err
+		}
+
+		// create an configure vxlan
+		link = &netlink.Vxlan{
+			LinkAttrs: netlink.LinkAttrs{
+				Name:    name,
+				MTU:     1410, // Adjust MTU to account for VXLAN overhead on 1460 host MTU
+			},
+			VxlanId:  vxlanID,
+			SrcAddr:  net.ParseIP(ownIP),
+			Port:     4789,
+			Learning: true,
+		}
+
+		if err := netlink.LinkAdd(link); err != nil {
+			return err
+		}
+
+		// add vxlan to bridge
+		br, err := netlink.LinkByName(bridgeName)
+		if err != nil {
+			return err
+		}
+		if err := netlink.LinkSetMaster(link, br); err != nil {
+			return err
+		}
 	}
 
-	// create an configure vxlan
-	link := &netlink.Vxlan{
-		LinkAttrs: netlink.LinkAttrs{
-			Name: name,
-			MTU:  1410, // Adjust MTU to account for VXLAN overhead on 1460 host MTU
-		},
-		VxlanId:  vxlanID,
-		SrcAddr:  net.ParseIP(ownIP),
-		Port:     4789,
-		Learning: true,
-	}
-
-	if err := netlink.LinkAdd(link); err != nil {
-		return err
-	}
-
-	// add vxlan to bridge
-	br, err := netlink.LinkByName(bridgeName)
-	if err != nil {
-		return err
-	}
-	if err := netlink.LinkSetMaster(link, br); err != nil {
-		return err
+	// Set MTU even if interface already exists (in case it was wrong)
+	if err := netlink.LinkSetMTU(link, 1410); err != nil {
+		log.Printf("warning: failed to set MTU on %s: %v", name, err)
 	}
 
 	if err := netlink.LinkSetUp(link); err != nil {
@@ -206,6 +212,7 @@ func createVxlanInterface(name string, vxlanID int, ownIP string, bridgeName str
 	}
 
 	// Disable offloading that might interfere with VXLAN
+	// IMPORTANT: We apply this even if the interface already exists to ensure settings are correct.
 	// ethtool -K neon-vxlan0 tx off rx off tso off gso off gro off lro off
 	cmd := exec.Command("ethtool", "-K", name, "tx", "off", "rx", "off", "tso", "off", "gso", "off", "gro", "off", "lro", "off")
 	if out, err := cmd.CombinedOutput(); err != nil {
