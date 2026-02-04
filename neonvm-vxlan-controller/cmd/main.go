@@ -148,6 +148,15 @@ func createBrigeInterface(name string) error {
 		return err
 	}
 
+	// Disable bridge-nf-call-iptables for this bridge.
+	// This ensures that bridged IP packets are not subjected to host iptables rules,
+	// which can cause drops or misrouting in some environments (like Talos).
+	// We use the 'ip link' command as netlink.Bridge doesn't expose these options directly.
+	cmd := exec.Command("ip", "link", "set", "dev", name, "type", "bridge", "nf_call_iptables", "0", "nf_call_ip6tables", "0", "nf_call_arptables", "0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("warning: failed to disable bridge-nf on %s: %v, output: %s", name, err, string(out))
+	}
+
 	if err := netlink.LinkSetUp(link); err != nil {
 		return err
 	}
@@ -171,6 +180,7 @@ func createVxlanInterface(name string, vxlanID int, ownIP string, bridgeName str
 	link := &netlink.Vxlan{
 		LinkAttrs: netlink.LinkAttrs{
 			Name: name,
+			MTU:  1410, // Adjust MTU to account for VXLAN overhead on 1460 host MTU
 		},
 		VxlanId:  vxlanID,
 		SrcAddr:  net.ParseIP(ownIP),
@@ -195,11 +205,11 @@ func createVxlanInterface(name string, vxlanID int, ownIP string, bridgeName str
 		return err
 	}
 
-	// Disable TX checksum offloading
-	// ethtool -K neon-vxlan0 tx off
-	cmd := exec.Command("ethtool", "-K", name, "tx", "off")
+	// Disable offloading that might interfere with VXLAN
+	// ethtool -K neon-vxlan0 tx off rx off tso off gso off gro off lro off
+	cmd := exec.Command("ethtool", "-K", name, "tx", "off", "rx", "off", "tso", "off", "gso", "off", "gro", "off", "lro", "off")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to disable tx checksum: %w, output: %s", err, string(out))
+		log.Printf("warning: failed to disable offloading on %s: %v, output: %s", name, err, string(out))
 	}
 
 	return nil
