@@ -297,10 +297,13 @@ func upsertIptablesRules() error {
 	if err := insertRule(ipt, "nat", "POSTROUTING", 1, "-d", extraNetCidr, "-j", iptablesChainName); err != nil {
 		return err
 	}
-	if err := insertRule(ipt, "nat", iptablesChainName, 1, "-s", extraNetCidr, "-j", "ACCEPT"); err != nil {
+	if err := insertRule(ipt, "nat", iptablesChainName, 1, "-s", extraNetCidr, "-d", extraNetCidr, "-j", "RETURN"); err != nil {
 		return err
 	}
-	if err := insertRule(ipt, "nat", iptablesChainName, 2, "-d", extraNetCidr, "-j", "MASQUERADE"); err != nil {
+	if err := insertRule(ipt, "nat", iptablesChainName, 2, "-d", extraNetCidr, "!", "-s", extraNetCidr, "-j", "MASQUERADE"); err != nil {
+		return err
+	}
+	if err := insertRule(ipt, "nat", iptablesChainName, 3, "-s", extraNetCidr, "-j", "ACCEPT"); err != nil {
 		return err
 	}
 
