@@ -78,7 +78,7 @@ spec:
             add:
             - NET_RAW
             - NET_ADMIN
-          privileged: false
+          privileged: true
       tolerations:
       - operator: Exists
       volumes:

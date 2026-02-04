@@ -149,13 +149,25 @@ func createBrigeInterface(name string) error {
 	}
 
 	// Disable bridge-nf-call-iptables for this bridge.
-	// This ensures that bridged IP packets are not subjected to host iptables rules,
-	// which can cause drops or misrouting in some environments (like Talos).
-	// We use the 'ip link' command as netlink.Bridge doesn't expose these options directly.
-	// IMPORTANT: We apply this even if the bridge already exists to ensure settings are correct.
+	// We check for the global sysctl first because disabling it per-bridge via 'ip link' (as tried below)
+	// might not be sufficient if the global setting overrides it or if br_netfilter is quirky.
+	// Note: This requires the pod to be running in PRIVILEGED mode to write to /proc/sys.
+	sysctlCmd := exec.Command("sysctl", "-w", "net.bridge.bridge-nf-call-iptables=0")
+	if out, err := sysctlCmd.CombinedOutput(); err != nil {
+		log.Printf("warning: failed to disable global bridge-nf-call-iptables: %v, output: %s", err, string(out))
+	}
+
+	// We also try the 'ip link' method as a fallback or supplement
 	cmd := exec.Command("ip", "link", "set", "dev", name, "type", "bridge", "nf_call_iptables", "0", "nf_call_ip6tables", "0", "nf_call_arptables", "0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		log.Printf("warning: failed to disable bridge-nf on %s: %v, output: %s", name, err, string(out))
+	}
+
+	// Disable offloading on the bridge interface itself.
+	// This helps avoid issues where the bridge advertises capabilities that the underlying VXLAN device lacks.
+	ethCmd := exec.Command("ethtool", "-K", name, "tx", "off", "rx", "off", "tso", "off", "gso", "off", "gro", "off", "lro", "off")
+	if out, err := ethCmd.CombinedOutput(); err != nil {
+		log.Printf("warning: failed to disable offloading on %s: %v, output: %s", name, err, string(out))
 	}
 
 	if err := netlink.LinkSetUp(link); err != nil {
@@ -305,6 +317,20 @@ func upsertIptablesRules() error {
 	}
 	if err := insertRule(ipt, "nat", iptablesChainName, 3, "-s", extraNetCidr, "-j", "ACCEPT"); err != nil {
 		return err
+	}
+
+	// Ensure FORWARD chain allows traffic.
+	// In some K8s setups, default policy is DROP or there are reject rules.
+	// We insert an unconditional ACCEPT at the top of the FORWARD chain.
+	// We use "filter" table (default).
+	iptFilter, err := iptables.New(iptables.IPFamily(iptables.ProtocolIPv4), iptables.Timeout(5))
+	if err != nil {
+		return err
+	}
+	// Insert ACCEPT rule at position 1.
+	if err := insertRule(iptFilter, "filter", "FORWARD", 1, "-j", "ACCEPT"); err != nil {
+		// Log error but don't fail hard if filter table access has issues, though it should work.
+		log.Printf("warning: failed to insert FORWARD ACCEPT rule: %v", err)
 	}
 
 	return nil
