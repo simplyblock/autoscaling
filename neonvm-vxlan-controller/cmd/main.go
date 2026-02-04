@@ -161,8 +161,11 @@ func createBrigeInterface(name string) error {
 }
 
 func createVxlanInterface(name string, vxlanID int, ownIP string, bridgeName string) error {
+	var link netlink.Link
+	var err error
+
 	// check if interface already exists
-	link, err := netlink.LinkByName(name)
+	link, err = netlink.LinkByName(name)
 	if err == nil {
 		log.Printf("link with name %s already found, applying settings", name)
 	} else {
@@ -172,7 +175,7 @@ func createVxlanInterface(name string, vxlanID int, ownIP string, bridgeName str
 		}
 
 		// create an configure vxlan
-		link = &netlink.Vxlan{
+		vxlan := &netlink.Vxlan{
 			LinkAttrs: netlink.LinkAttrs{
 				Name: name,
 				MTU:  1410, // Adjust MTU to account for VXLAN overhead on 1460 host MTU
@@ -183,18 +186,19 @@ func createVxlanInterface(name string, vxlanID int, ownIP string, bridgeName str
 			Learning: true,
 		}
 
-		if err := netlink.LinkAdd(link); err != nil {
+		if err := netlink.LinkAdd(vxlan); err != nil {
 			return err
 		}
+		link = vxlan
+	}
 
-		// add vxlan to bridge
-		br, err := netlink.LinkByName(bridgeName)
-		if err != nil {
-			return err
-		}
-		if err := netlink.LinkSetMaster(link, br); err != nil {
-			return err
-		}
+	// Always ensure the VXLAN interface is attached to the bridge
+	br, err := netlink.LinkByName(bridgeName)
+	if err != nil {
+		return fmt.Errorf("failed to find bridge %s: %w", bridgeName, err)
+	}
+	if err := netlink.LinkSetMaster(link, br); err != nil {
+		return fmt.Errorf("failed to set master for %s to %s: %w", name, bridgeName, err)
 	}
 
 	// Set MTU even if interface already exists (in case it was wrong)
