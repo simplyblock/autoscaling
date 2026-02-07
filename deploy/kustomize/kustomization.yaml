@@ -57,11 +57,11 @@ patches:
           - name: VM_RUNNER_IMAGE
             value: docker.io/simplyblock/autoscaling:neonvm-runner-main-7e22f4a
           - name: NAD_IPAM_NAME
-            value: overlay-ipam
+            value: neonvm-overlay-ipam
           - name: NAD_IPAM_NAMESPACE
             value: neonvm-system
           - name: NAD_RUNNER_NAME
-            value: overlay-for-vms
+            value: neonvm-overlay-for-vms
           - name: NAD_RUNNER_NAMESPACE
             value: neonvm-system
 
