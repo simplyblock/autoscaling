@@ -68,7 +68,21 @@ patches:
   # Ensure overlays land in neonvm-system
   - target:
       kind: NetworkAttachmentDefinition
-      name: neonvm-overlay-for-pods|neonvm-overlay-for-vms|neonvm-overlay-ipam
+      name: neonvm-overlay-for-pods
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: neonvm-system
+  - target:
+      kind: NetworkAttachmentDefinition
+      name: neonvm-overlay-for-vms
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: neonvm-system
+  - target:
+      kind: NetworkAttachmentDefinition
+      name: neonvm-overlay-ipam
     patch: |-
       - op: replace
         path: /metadata/namespace
