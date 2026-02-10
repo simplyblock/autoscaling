@@ -1,22 +1,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-bases:
-- ../multus-common
 
 images:
 - name: multus-cni
   newName: docker.io/bitnami/multus-cni
   newTag: 3.9.3
 
-patchesStrategicMerge:
-- daemonset_patch.yaml
 
 patches:
-- target:
-    kind: DaemonSet
-    name: kube-multus-ds
-  patch: |-
+- patch: |-
     - op: replace
       path: /spec/template/spec/containers/0/command
       value: ["/usr/src/multus-cni/bin/multus-daemon"]
@@ -34,3 +27,9 @@ patches:
     - op: replace
       path: /spec/template/spec/containers/0/securityContext/runAsUser
       value: 0
+  target:
+    kind: DaemonSet
+    name: kube-multus-ds
+- path: daemonset_patch.yaml
+resources:
+- ../multus-common

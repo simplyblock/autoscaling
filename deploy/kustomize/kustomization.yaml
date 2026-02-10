@@ -1,0 +1,89 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # Core NeonVM (CRDs, webhooks, device plugin, network NADs, RBAC)
+  - ../../neonvm/config
+  # NeonVM controller
+  - ../../neonvm-controller
+  # VXLAN controller
+  - ../../neonvm-vxlan-controller
+  # Runner image pre-loader
+  - ../../neonvm-runner/image-loader/bases
+  # Autoscale scheduler + agent
+  - ../../autoscale-scheduler
+  - ../../autoscaler-agent
+  # Vendor CNI bits
+  - vendor/multus-daemonset-thick.yaml
+  - vendor/whereabouts.yaml
+
+# Standardize images to published tags
+images:
+  - name: controller
+    newName: docker.io/simplyblock/autoscaling
+    newTag: neonvm-controller-main-7e22f4a
+  - name: runner
+    newName: docker.io/simplyblock/autoscaling
+    newTag: neonvm-runner-main-7e22f4a
+  - name: vxlan-controller
+    newName: docker.io/simplyblock/autoscaling
+    newTag: neonvm-vxlan-controller-main-7e22f4a
+  - name: autoscale-scheduler
+    newName: docker.io/simplyblock/autoscaling
+    newTag: autoscale-scheduler-main-7e22f4a
+  - name: autoscaler-agent
+    newName: docker.io/simplyblock/autoscaling
+    newTag: autoscaler-agent-main-7e22f4a
+
+patches:
+  # Put runner image-loader into neonvm-system (its base lacks namespace)
+  - target:
+      kind: DaemonSet
+      name: runner-image-loader
+    patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: neonvm-system
+
+  # Hard-set controller envs instead of relying on cross-kustomize vars
+  - target:
+      kind: Deployment
+      name: neonvm-controller
+      namespace: neonvm-system
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value:
+          - name: VM_RUNNER_IMAGE
+            value: docker.io/simplyblock/autoscaling:neonvm-runner-main-7e22f4a
+          - name: NAD_IPAM_NAME
+            value: neonvm-overlay-ipam
+          - name: NAD_IPAM_NAMESPACE
+            value: neonvm-system
+          - name: NAD_RUNNER_NAME
+            value: neonvm-overlay-for-vms
+          - name: NAD_RUNNER_NAMESPACE
+            value: neonvm-system
+
+  # Ensure overlays land in neonvm-system
+  - target:
+      kind: NetworkAttachmentDefinition
+      name: neonvm-overlay-for-pods
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: neonvm-system
+  - target:
+      kind: NetworkAttachmentDefinition
+      name: neonvm-overlay-for-vms
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: neonvm-system
+  - target:
+      kind: NetworkAttachmentDefinition
+      name: neonvm-overlay-ipam
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: neonvm-system

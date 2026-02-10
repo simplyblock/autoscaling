@@ -2,7 +2,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: autoscale-scheduler-virtualmachine-editor
-  namespace: kube-system
 subjects:
 - kind: ServiceAccount
   name: autoscale-scheduler
@@ -16,7 +15,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: autoscale-scheduler-virtualmachinemigration-editor
-  namespace: kube-system
 subjects:
 - kind: ServiceAccount
   name: autoscale-scheduler
