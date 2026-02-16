@@ -213,7 +213,9 @@ func (r *VMReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Re
 	// changes from QEMU, and it's wasteful to repeatedly check.
 	if vm.Status.Phase == vmv1.VmScaling ||
 		vm.Status.Phase == vmv1.VmMigrating ||
-		vm.Status.Phase == vmv1.VmPreMigrating {
+		vm.Status.Phase == vmv1.VmPreMigrating ||
+		// If the VM is running but we want it stopped, requeue quickly to enforce the grace period
+		(vm.Status.Phase == vmv1.VmRunning && vm.Spec.PowerState == vmv1.PowerStateStopped) {
 		requeueAfter = time.Second
 	}
 
@@ -906,6 +908,27 @@ func (r *VMReconciler) requestRunnerShutdown(
 	if ip == "" {
 		logger.Info("VM runner IP is empty, deleting pod to stop it", "VirtualMachine", vm.Name, "Pod", vmRunner.Name)
 		return client.IgnoreNotFound(r.Delete(ctx, vmRunner))
+	}
+
+	// Check if the VM has been in "PowerStateStopped" for longer than the grace period
+	stoppedCondition := meta.FindStatusCondition(vm.Status.Conditions, typeAvailableVirtualMachine)
+	if stoppedCondition != nil &&
+		stoppedCondition.Status == metav1.ConditionFalse &&
+		stoppedCondition.Reason == "PowerStateStopped" {
+
+		gracePeriod := time.Duration(vmv1.DefaultTerminationGracePeriodSeconds) * time.Second
+		if vm.Spec.TerminationGracePeriodSeconds != nil {
+			gracePeriod = time.Duration(*vm.Spec.TerminationGracePeriodSeconds) * time.Second
+		}
+
+		if time.Since(stoppedCondition.LastTransitionTime.Time) > gracePeriod {
+			logger.Info("VM runner failed to shut down within grace period, force deleting pod",
+				"VirtualMachine", vm.Name,
+				"Pod", vmRunner.Name,
+				"GracePeriod", gracePeriod,
+			)
+			return client.IgnoreNotFound(r.Delete(ctx, vmRunner))
+		}
 	}
 
 	logger.Info("Requesting VM shutdown via QMP", "VirtualMachine", vm.Name, "Pod", vmRunner.Name)
