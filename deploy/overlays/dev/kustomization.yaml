@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # Inherit from the base composed in the root kustomization.yaml
+  - ../../kustomize
+
+patches:
+  - target:
+      kind: Deployment
+      name: neonvm-controller
+    patch: |-
+      # Update Replicas
+      - op: replace
+        path: /spec/replicas
+        value: 1
+        
+      # Update CPU Request
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "500m"
+
+      # Update Memory Request
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "1Gi"
