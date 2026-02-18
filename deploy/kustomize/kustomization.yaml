@@ -21,19 +21,19 @@ resources:
 images:
   - name: controller
     newName: docker.io/simplyblock/autoscaling
-    newTag: neonvm-controller-main-7e22f4a
+    newTag: neonvm-controller-main
   - name: runner
     newName: docker.io/simplyblock/autoscaling
-    newTag: neonvm-runner-main-7e22f4a
+    newTag: neonvm-runner-main
   - name: vxlan-controller
     newName: docker.io/simplyblock/autoscaling
-    newTag: neonvm-vxlan-controller-main-7e22f4a
+    newTag: neonvm-vxlan-controller-main
   - name: autoscale-scheduler
     newName: docker.io/simplyblock/autoscaling
-    newTag: autoscale-scheduler-main-7e22f4a
+    newTag: autoscale-scheduler-main
   - name: autoscaler-agent
     newName: docker.io/simplyblock/autoscaling
-    newTag: autoscaler-agent-main-7e22f4a
+    newTag: autoscaler-agent-main
 
 patches:
   # Put runner image-loader into neonvm-system (its base lacks namespace)
@@ -55,7 +55,7 @@ patches:
         path: /spec/template/spec/containers/0/env
         value:
           - name: VM_RUNNER_IMAGE
-            value: docker.io/simplyblock/autoscaling:neonvm-runner-main-7e22f4a
+            value: docker.io/simplyblock/autoscaling:neonvm-runner-main
           - name: NAD_IPAM_NAME
             value: neonvm-overlay-ipam
           - name: NAD_IPAM_NAMESPACE
