@@ -55,6 +55,9 @@ const (
 	//
 	// The value of this annotation is always a JSON-encoded OvercommitSettings.
 	VirtualMachineOvercommitAnnotation string = "vm.neon.tech/overcommit"
+
+	// DefaultTerminationGracePeriodSeconds is the default time in seconds to wait for a VM to shut down.
+	DefaultTerminationGracePeriodSeconds int64 = 5
 )
 
 // VirtualMachineUsage provides information about a VM's current usage. This is the type of the
