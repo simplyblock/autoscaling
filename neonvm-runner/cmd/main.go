@@ -1044,7 +1044,7 @@ func sendFilesToNeonvmDaemon(ctx context.Context, hostpath, guestpath string) er
 	}
 
 	files, err := util.ReadAllFiles(hostpath)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil {
 		return fmt.Errorf("could not open file: %w", err)
 	}
 
