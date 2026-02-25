@@ -61,6 +61,9 @@ func ChecksumFlatDir(path string) (string, error) {
 func ReadAllFiles(path string) (map[string][]byte, error) {
 	entries, err := os.ReadDir(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return make(map[string][]byte), nil
+		}
 		return nil, err
 	}
 

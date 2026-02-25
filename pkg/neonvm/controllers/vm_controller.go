@@ -1859,7 +1859,9 @@ func podSpec(
 						LocalObjectReference: corev1.LocalObjectReference{
 							Name: disk.ConfigMap.Name,
 						},
-						Items: disk.ConfigMap.Items,
+						Items:       disk.ConfigMap.Items,
+						DefaultMode: disk.ConfigMap.DefaultMode,
+						Optional:    disk.ConfigMap.Optional,
 					},
 				},
 			})
@@ -1869,8 +1871,10 @@ func podSpec(
 				Name: disk.Name,
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName: disk.Secret.SecretName,
-						Items:      disk.Secret.Items,
+						SecretName:  disk.Secret.SecretName,
+						Items:       disk.Secret.Items,
+						DefaultMode: disk.Secret.DefaultMode,
+						Optional:    disk.Secret.Optional,
 					},
 				},
 			})
