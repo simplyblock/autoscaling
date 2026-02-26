@@ -1,6 +1,6 @@
 # NeonVM Field Mutability
 
-**Note:** ALL fields can be mutable if the VM is completely stopped (`powerState == Stopped`).
+**Note:** ALL fields **can** be mutable if the VM is completely stopped (`powerState == Stopped`).
 The table below indicates mutability while the VM is **Running**.
 
 | Field Path | Mutable? | Notes |
