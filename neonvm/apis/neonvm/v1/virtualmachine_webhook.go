@@ -160,29 +160,36 @@ func (r *VirtualMachine) ValidateUpdate(old runtime.Object) (admission.Warnings,
 		{".spec.enableNetworkMonitoring", func(v *VirtualMachine) any { return v.Spec.EnableNetworkMonitoring }},
 	}
 
-	for _, info := range immutableFields {
-		if !reflect.DeepEqual(info.getter(r), info.getter(before)) {
-			return nil, fmt.Errorf("%s is immutable", info.fieldName)
+	// Skip immutability checks if the VM is, and remains, completely stopped.
+	// When a VM is stopped, modifying these fields is perfectly safe because the next start
+	// will spawn a completely new runner pod with the updated specification.
+	isStopped := before.Spec.PowerState == PowerStateStopped && r.Spec.PowerState == PowerStateStopped
+
+	if !isStopped {
+		for _, info := range immutableFields {
+			if !reflect.DeepEqual(info.getter(r), info.getter(before)) {
+				return nil, fmt.Errorf("%s is immutable", info.fieldName)
+			}
 		}
-	}
 
-	if err := validateDiskUpdates(before.Spec.Disks, r.Spec.Disks); err != nil {
-		return nil, err
-	}
+		if err := validateDiskUpdates(before.Spec.Disks, r.Spec.Disks); err != nil {
+			return nil, err
+		}
 
-	fieldsAllowedToChangeFromNilOnly := []struct {
-		fieldName string
-		getter    func(*VirtualMachine) any
-	}{
-		{".spec.cpuScalingMode", func(v *VirtualMachine) any { return v.Spec.CpuScalingMode }},
-		{".spec.targetArchitecture", func(v *VirtualMachine) any { return v.Spec.TargetArchitecture }},
-	}
+		fieldsAllowedToChangeFromNilOnly := []struct {
+			fieldName string
+			getter    func(*VirtualMachine) any
+		}{
+			{".spec.cpuScalingMode", func(v *VirtualMachine) any { return v.Spec.CpuScalingMode }},
+			{".spec.targetArchitecture", func(v *VirtualMachine) any { return v.Spec.TargetArchitecture }},
+		}
 
-	for _, info := range fieldsAllowedToChangeFromNilOnly {
-		beforeValue := info.getter(before)
-		newValue := info.getter(r)
-		if !reflect.ValueOf(beforeValue).IsNil() && (reflect.ValueOf(newValue).IsNil() || !reflect.DeepEqual(newValue, beforeValue)) {
-			return nil, fmt.Errorf("%s is not allowed to be changed once it's set", info.fieldName)
+		for _, info := range fieldsAllowedToChangeFromNilOnly {
+			beforeValue := info.getter(before)
+			newValue := info.getter(r)
+			if !reflect.ValueOf(beforeValue).IsNil() && (reflect.ValueOf(newValue).IsNil() || !reflect.DeepEqual(newValue, beforeValue)) {
+				return nil, fmt.Errorf("%s is not allowed to be changed once it's set", info.fieldName)
+			}
 		}
 	}
 
