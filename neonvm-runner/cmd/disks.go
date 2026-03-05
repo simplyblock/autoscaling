@@ -387,16 +387,29 @@ func ensureBlockDeviceReady(logger *zap.Logger, diskName, devicePath string) err
 
 	switch fsType {
 	case "":
-		logger.Info("formatting PVC-backed block device as ext4", zap.String("disk", diskName))
-		if err := execFg("mkfs.ext4", "-F", "-L", diskName, devicePath); err != nil {
-			return err
+		// Try to use xfs if available, otherwise fallback to ext4
+		if _, err := exec.LookPath("mkfs.xfs"); err == nil {
+			logger.Info("formatting PVC-backed block device as xfs", zap.String("disk", diskName))
+			if err := execFg("mkfs.xfs", "-L", diskName, devicePath); err != nil {
+				return err
+			}
+		} else {
+			logger.Info("formatting PVC-backed block device as ext4", zap.String("disk", diskName))
+			if err := execFg("mkfs.ext4", "-F", "-L", diskName, devicePath); err != nil {
+				return err
+			}
 		}
 	case "ext4":
 		if err := execFg("tune2fs", "-L", diskName, devicePath); err != nil {
 			return err
 		}
+	case "xfs":
+		// xfs_admin to update label if needed
+		if err := execFg("xfs_admin", "-L", diskName, devicePath); err != nil {
+			return err
+		}
 	default:
-		return fmt.Errorf("unsupported filesystem %q found on disk %s (expected ext4 or empty)", fsType, diskName)
+		return fmt.Errorf("unsupported filesystem %q found on disk %s (expected ext4, xfs or empty)", fsType, diskName)
 	}
 
 	return nil
