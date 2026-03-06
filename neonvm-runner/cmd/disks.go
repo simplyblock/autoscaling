@@ -390,7 +390,8 @@ func ensureBlockDeviceReady(logger *zap.Logger, diskName, devicePath string) err
 		// Try to use xfs if available, otherwise fallback to ext4
 		if _, err := exec.LookPath("mkfs.xfs"); err == nil {
 			logger.Info("formatting PVC-backed block device as xfs", zap.String("disk", diskName))
-			if err := execFg("mkfs.xfs", "-L", diskName, devicePath); err != nil {
+			// Use -K to prevent discarding blocks at mkfs time, making it independent of disk size
+			if err := execFg("mkfs.xfs", "-K", "-L", diskName, devicePath); err != nil {
 				return err
 			}
 		} else {
