@@ -31,7 +31,8 @@ RUN apk add --no-cache \
     socat \
     tcpdump \
     tini \
-    xfsprogs
+    xfsprogs \
+    xfsprogs-extra
 
 COPY neonvm-runner/ssh_config /etc/ssh/ssh_config
 
