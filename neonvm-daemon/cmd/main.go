@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -221,10 +222,40 @@ func resizeFilesystemForLabel(label string) error {
 		return err
 	}
 
-	cmd := exec.Command("/neonvm/bin/resize2fs", device)
+	fsType, err := filesystemTypeForDevice(device)
+	if err != nil {
+		return fmt.Errorf("could not detect filesystem type for %s: %w", device, err)
+	}
+
+	var cmd *exec.Cmd
+	switch fsType {
+	case "xfs":
+		// xfs_growfs takes the mount point or the device path and expands the mounted filesystem
+		cmd = exec.Command("/neonvm/bin/xfs_growfs", device)
+	case "ext4", "":
+		// resize2fs expands the ext4 filesystem to fill the block device
+		cmd = exec.Command("/neonvm/bin/resize2fs", device)
+	default:
+		return fmt.Errorf("unsupported filesystem type %q on device %s", fsType, device)
+	}
+
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func filesystemTypeForDevice(device string) (string, error) {
+	cmd := exec.Command("/neonvm/bin/blkid", "-o", "value", "-s", "TYPE", device)
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		// blkid exits with code 2 when no filesystem is found
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 func devicePathForLabel(label string) (string, error) {
