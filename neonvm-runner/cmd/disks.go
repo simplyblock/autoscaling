@@ -33,9 +33,11 @@ const (
 )
 
 type blockDeviceRuntimeInfo struct {
-	Name       string
-	DevicePath string
-	Size       int64
+	Name           string
+	DevicePath     string
+	Size           int64
+	PVCName        string
+	failedNotified bool // true after first failure event emitted; reset on success
 }
 
 // setupVMDisks creates the disks for the VM and returns the appropriate QEMU args
@@ -88,10 +90,21 @@ func setupVMDisks(
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to read size for block device %s at %s: %w", disk.Name, devicePath, err)
 			}
+			pvcName := ""
+			if disk.BlockDevice.ExistingClaimName != "" {
+				pvcName = disk.BlockDevice.ExistingClaimName
+			} else if disk.BlockDevice.PersistentVolumeClaim != nil {
+				pvcName = disk.BlockDevice.PersistentVolumeClaim.ClaimName
+			}
+			if pvcName == "" {
+				logger.Warn("could not determine PVC name for block device; guest filesystem resize events will not be emitted", zap.String("disk", disk.Name))
+			}
 			blockInfos = append(blockInfos, blockDeviceRuntimeInfo{
-				Name:       disk.Name,
-				DevicePath: devicePath,
-				Size:       size,
+				Name:           disk.Name,
+				DevicePath:     devicePath,
+				Size:           size,
+				PVCName:        pvcName,
+				failedNotified: false,
 			})
 			logger.Info("attaching PVC-backed block device", zap.String("disk", disk.Name), zap.String("devicePath", devicePath))
 			qemuCmd = append(

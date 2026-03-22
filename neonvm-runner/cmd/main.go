@@ -29,7 +29,11 @@ import (
 	"github.com/samber/lo"
 	"go.uber.org/zap"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	vmv1 "github.com/neondatabase/autoscaling/neonvm/apis/neonvm/v1"
 	"github.com/neondatabase/autoscaling/pkg/util"
@@ -492,6 +496,7 @@ func runQEMU(
 	if !ok {
 		return fmt.Errorf("environment variable K8S_POD_NAME missing")
 	}
+	selfPodNamespace := os.Getenv("K8S_POD_NAMESPACE")
 
 	var cgroupPath string
 
@@ -583,9 +588,19 @@ func runQEMU(
 	go forwardLogs(ctx, logger, &wg)
 	wg.Add(1)
 	go monitorFiles(ctx, logger, &wg, vmSpec)
+	var k8sClient *kubernetes.Clientset
+	if selfPodNamespace != "" {
+		if restCfg, err := rest.InClusterConfig(); err != nil {
+			logger.Warn("could not build in-cluster k8s config; disk resize events will not be emitted", zap.Error(err))
+		} else if cs, err := kubernetes.NewForConfig(restCfg); err != nil {
+			logger.Warn("could not create k8s clientset; disk resize events will not be emitted", zap.Error(err))
+		} else {
+			k8sClient = cs
+		}
+	}
 	if len(blockDevices) != 0 {
 		wg.Add(1)
-		go watchBlockDeviceResizes(ctx, logger, blockDevices, &wg)
+		go watchBlockDeviceResizes(ctx, logger, blockDevices, &wg, k8sClient, selfPodNamespace)
 	}
 
 	qemuBin := getQemuBinaryName(cfg.architecture)
@@ -835,7 +850,7 @@ func monitorFiles(ctx context.Context, logger *zap.Logger, wg *sync.WaitGroup, v
 	}
 }
 
-func watchBlockDeviceResizes(ctx context.Context, logger *zap.Logger, devices []blockDeviceRuntimeInfo, wg *sync.WaitGroup) {
+func watchBlockDeviceResizes(ctx context.Context, logger *zap.Logger, devices []blockDeviceRuntimeInfo, wg *sync.WaitGroup, k8sClient *kubernetes.Clientset, namespace string) {
 	defer wg.Done()
 
 	if len(devices) == 0 {
@@ -847,7 +862,7 @@ func watchBlockDeviceResizes(ctx context.Context, logger *zap.Logger, devices []
 	defer ticker.Stop()
 
 	for i := range devices {
-		monitorBlockDeviceResize(ctx, logger, &devices[i])
+		monitorBlockDeviceResize(ctx, logger, &devices[i], k8sClient, namespace)
 	}
 
 	for {
@@ -856,13 +871,13 @@ func watchBlockDeviceResizes(ctx context.Context, logger *zap.Logger, devices []
 			return
 		case <-ticker.C:
 			for i := range devices {
-				monitorBlockDeviceResize(ctx, logger, &devices[i])
+				monitorBlockDeviceResize(ctx, logger, &devices[i], k8sClient, namespace)
 			}
 		}
 	}
 }
 
-func monitorBlockDeviceResize(ctx context.Context, logger *zap.Logger, device *blockDeviceRuntimeInfo) {
+func monitorBlockDeviceResize(ctx context.Context, logger *zap.Logger, device *blockDeviceRuntimeInfo, k8sClient *kubernetes.Clientset, namespace string) {
 	size, err := blockDeviceSize(device.DevicePath)
 	if err != nil {
 		logger.Warn("failed to read block device size", zap.String("disk", device.Name), zap.String("devicePath", device.DevicePath), zap.Error(err))
@@ -875,10 +890,22 @@ func monitorBlockDeviceResize(ctx context.Context, logger *zap.Logger, device *b
 	logger.Info("detected PVC-backed block device expansion", zap.String("disk", device.Name), zap.Int64("previousSize", device.Size), zap.Int64("newSize", size))
 	if err := resizeGuestDisk(ctx, logger, device.Name, size); err != nil {
 		logger.Error("failed to resize guest disk", zap.String("disk", device.Name), zap.Error(err))
+		// Emit failure event only on first failure to avoid flooding the API server.
+		// The poll loop retries every 3s; we don't need a new event each time.
+		if !device.failedNotified {
+			emitPVCEvent(ctx, logger, k8sClient, namespace, device.PVCName,
+				corev1.EventTypeWarning, "GuestFilesystemResizeFailed",
+				fmt.Sprintf("Failed to resize filesystem for disk %s inside guest VM: %v", device.Name, err))
+			device.failedNotified = true
+		}
 		return
 	}
-
 	device.Size = size
+	device.failedNotified = false
+
+	emitPVCEvent(ctx, logger, k8sClient, namespace, device.PVCName,
+		corev1.EventTypeNormal, "GuestFilesystemResizeSuccessful",
+		fmt.Sprintf("Successfully expanded filesystem for disk %s to %d bytes inside guest VM", device.Name, size))
 }
 
 func terminateQemuOnSigterm(ctx context.Context, logger *zap.Logger, wg *sync.WaitGroup) {
@@ -1119,6 +1146,48 @@ func getFileChecksumFromNeonvmDaemon(ctx context.Context, guestpath string) (str
 	}
 
 	return string(checksum), nil
+}
+
+// emitPVCEvent creates a Kubernetes Event on the named PVC so the control
+// plane can observe guest filesystem resize completion via its existing PVC
+// event watch.  Best-effort: failures are logged but do not block the resize.
+func emitPVCEvent(ctx context.Context, logger *zap.Logger, clientset *kubernetes.Clientset, namespace, pvcName, eventType, reason, message string) {
+	if clientset == nil || pvcName == "" || namespace == "" {
+		return
+	}
+	now := metav1.Now()
+	// Use GenerateName so the API server assigns a unique suffix.
+	// Using Name with pvcName as a prefix could exceed the 253-char
+	// Kubernetes name limit for long PVC names.
+	prefix := pvcName
+	if len(prefix) > 63 {
+		prefix = prefix[:63]
+	}
+	event := &corev1.Event{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: prefix + "-",
+			Namespace:    namespace,
+		},
+		InvolvedObject: corev1.ObjectReference{
+			Kind:       "PersistentVolumeClaim",
+			Name:       pvcName,
+			Namespace:  namespace,
+			APIVersion: "v1",
+		},
+		Reason:         reason,
+		Message:        message,
+		Type:           eventType,
+		FirstTimestamp: now,
+		LastTimestamp:  now,
+		Count:          1,
+		Source: corev1.EventSource{
+			Component: "neonvm-runner",
+		},
+	}
+	if _, err := clientset.CoreV1().Events(namespace).Create(ctx, event, metav1.CreateOptions{}); err != nil {
+		logger.Warn("failed to emit PVC resize event",
+			zap.String("pvc", pvcName), zap.String("reason", reason), zap.Error(err))
+	}
 }
 
 func resizeGuestDisk(ctx context.Context, logger *zap.Logger, diskName string, newSize int64) error {
