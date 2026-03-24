@@ -230,8 +230,13 @@ func resizeFilesystemForLabel(label string) error {
 	var cmd *exec.Cmd
 	switch fsType {
 	case "xfs":
-		// xfs_growfs takes the mount point or the device path and expands the mounted filesystem
-		cmd = exec.Command("/neonvm/bin/xfs_growfs", device)
+		// xfs_growfs requires a mount point, not a block device path.
+		mountPoint, err := findMountPoint(device)
+		if err != nil {
+			return fmt.Errorf("could not find mount point for %s: %w", device, err)
+		}
+		// xfs_growfs expands the mounted filesystem at the given mount point
+		cmd = exec.Command("/neonvm/bin/xfs_growfs", mountPoint)
 	case "ext4", "":
 		// resize2fs expands the ext4 filesystem to fill the block device
 		cmd = exec.Command("/neonvm/bin/resize2fs", device)
@@ -242,6 +247,20 @@ func resizeFilesystemForLabel(label string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// findMountPoint returns the mount target for the given device by querying findmnt.
+func findMountPoint(device string) (string, error) {
+	cmd := exec.Command("/neonvm/bin/findmnt", "--source", device, "-n", "-o", "TARGET", "--first-only")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("findmnt failed for %s: %w (output: %s)", device, err, strings.TrimSpace(string(output)))
+	}
+	mountPoint := strings.TrimSpace(string(output))
+	if mountPoint == "" {
+		return "", fmt.Errorf("device %s is not mounted", device)
+	}
+	return mountPoint, nil
 }
 
 func filesystemTypeForDevice(device string) (string, error) {
