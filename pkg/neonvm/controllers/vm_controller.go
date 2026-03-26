@@ -365,8 +365,12 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 			log.Error(err, "Failed to acquire overlay IP", "VirtualMachine", vm.Name)
 			return err
 		}
-		// VirtualMachine just created, change Phase to "Pending"
-		vm.Status.Phase = vmv1.VmPending
+		if wantRunning {
+			// VirtualMachine just created, change Phase to "Pending"
+			vm.Status.Phase = vmv1.VmPending
+		} else {
+			setVMStopped(vm)
+		}
 	case vmv1.VmPending:
 		if !wantRunning {
 			if vm.Status.PodName != "" {
@@ -394,7 +398,8 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 					return nil
 				}
 			}
-			setVMStoppedCondition(vm)
+			vm.Cleanup()
+			setVMStopped(vm)
 			return nil
 		}
 
@@ -743,6 +748,13 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 			vm.Status.Phase = vmv1.VmRunning
 		}
 
+	case vmv1.VmStopped:
+		if wantRunning {
+			vm.Status.Phase = vmv1.VmPending
+		} else {
+			setVMStoppedCondition(vm)
+		}
+
 	case vmv1.VmSucceeded, vmv1.VmFailed:
 		// Always delete runner pod. Otherwise, we could end up with one container succeeded/failed
 		// but the other one still running (meaning that the pod still ends up Running).
@@ -815,7 +827,7 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 				vm.Status.RestartCount += 1      // increment restart count
 				r.Metrics.vmRestartCounts.Inc()
 			} else if !wantRunning {
-				setVMStoppedCondition(vm)
+				setVMStopped(vm)
 			}
 
 			// TODO for RestartPolicyNever: implement TTL or do nothing
@@ -853,6 +865,11 @@ func setVMStoppedCondition(vm *vmv1.VirtualMachine) {
 			Reason:  "PowerStateStopped",
 			Message: "VirtualMachine stopped as requested by spec.powerState",
 		})
+}
+
+func setVMStopped(vm *vmv1.VirtualMachine) {
+	vm.Status.Phase = vmv1.VmStopped
+	setVMStoppedCondition(vm)
 }
 
 func (r *VMReconciler) doVirtioMemScaling(
