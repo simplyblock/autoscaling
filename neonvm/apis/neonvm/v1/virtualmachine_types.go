@@ -57,7 +57,7 @@ const (
 	VirtualMachineOvercommitAnnotation string = "vm.neon.tech/overcommit"
 
 	// DefaultTerminationGracePeriodSeconds is the default time in seconds to wait for a VM to shut down.
-	DefaultTerminationGracePeriodSeconds int64 = 5
+	DefaultTerminationGracePeriodSeconds int64 = 30
 )
 
 // VirtualMachineUsage provides information about a VM's current usage. This is the type of the
