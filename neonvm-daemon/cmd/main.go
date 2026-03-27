@@ -46,6 +46,7 @@ func main() {
 		cpuScaler:           cpuscaling.NewCPUScaler(),
 		fileOperationsMutex: &sync.Mutex{},
 		diskOperationsMutex: &sync.Mutex{},
+		walOperationsMutex:  &sync.Mutex{},
 		logger:              logger.Named("cpu-srv"),
 	}
 	srv.run(*addr)
@@ -58,6 +59,7 @@ type cpuServer struct {
 	cpuScaler           *cpuscaling.CPUScaler
 	fileOperationsMutex *sync.Mutex
 	diskOperationsMutex *sync.Mutex
+	walOperationsMutex  *sync.Mutex
 	logger              *zap.Logger
 }
 
@@ -290,6 +292,83 @@ func devicePathForLabel(label string) (string, error) {
 	return path, nil
 }
 
+type compactWALRequest struct {
+	SafeWAL    string `json:"safe_wal"`
+	ArchiveDir string `json:"archive_dir"`
+}
+
+type compactWALResponse struct {
+	RemovedFiles int `json:"removed_files"`
+}
+
+func countWALFiles(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (s *cpuServer) handleCompactWAL(w http.ResponseWriter, r *http.Request) {
+	s.walOperationsMutex.Lock()
+	defer s.walOperationsMutex.Unlock()
+
+	if r.Body == nil {
+		http.Error(w, "request body required", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var req compactWALRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.logger.Error("could not parse WAL compact request", zap.Error(err))
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.SafeWAL == "" || req.ArchiveDir == "" {
+		http.Error(w, "safe_wal and archive_dir are required", http.StatusBadRequest)
+		return
+	}
+
+	beforeCount, err := countWALFiles(req.ArchiveDir)
+	if err != nil {
+		s.logger.Error("could not read archive directory", zap.String("archive_dir", req.ArchiveDir), zap.Error(err))
+		http.Error(w, "failed to read archive directory", http.StatusInternalServerError)
+		return
+	}
+
+	cmd := exec.Command("pg_archivecleanup", req.ArchiveDir, req.SafeWAL)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		s.logger.Error("pg_archivecleanup failed",
+			zap.String("archive_dir", req.ArchiveDir),
+			zap.String("safe_wal", req.SafeWAL),
+			zap.String("output", string(output)),
+			zap.Error(err))
+		http.Error(w, fmt.Sprintf("pg_archivecleanup failed: %s", strings.TrimSpace(string(output))), http.StatusInternalServerError)
+		return
+	}
+
+	afterCount, _ := countWALFiles(req.ArchiveDir)
+	removed := beforeCount - afterCount
+
+	s.logger.Info("WAL compact completed",
+		zap.String("safe_wal", req.SafeWAL),
+		zap.String("archive_dir", req.ArchiveDir),
+		zap.Int("removed_files", removed))
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(compactWALResponse{RemovedFiles: removed}) //nolint:errcheck
+}
+
 func (s *cpuServer) run(addr string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/cpu", func(w http.ResponseWriter, r *http.Request) {
@@ -327,6 +406,13 @@ func (s *cpuServer) run(addr string) {
 			return
 		}
 		s.handleDiskResize(w, r, label)
+	})
+	mux.HandleFunc("/wal/compact", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		s.handleCompactWAL(w, r)
 	})
 
 	timeout := 5 * time.Second
