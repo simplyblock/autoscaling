@@ -744,6 +744,10 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		}
 
 	case vmv1.VmSucceeded, vmv1.VmFailed:
+		if !wantRunning && vm.Status.Phase == vmv1.VmFailed {
+			setVMStoppedSucceeded(vm)
+		}
+
 		// Always delete runner pod. Otherwise, we could end up with one container succeeded/failed
 		// but the other one still running (meaning that the pod still ends up Running).
 		vmRunner := &corev1.Pod{}
@@ -846,6 +850,7 @@ func propagateRevision(vm *vmv1.VirtualMachine) {
 }
 
 func setVMStoppedCondition(vm *vmv1.VirtualMachine) {
+	meta.RemoveStatusCondition(&vm.Status.Conditions, typeDegradedVirtualMachine)
 	meta.SetStatusCondition(&vm.Status.Conditions,
 		metav1.Condition{
 			Type:    typeAvailableVirtualMachine,
@@ -853,6 +858,11 @@ func setVMStoppedCondition(vm *vmv1.VirtualMachine) {
 			Reason:  "PowerStateStopped",
 			Message: "VirtualMachine stopped as requested by spec.powerState",
 		})
+}
+
+func setVMStoppedSucceeded(vm *vmv1.VirtualMachine) {
+	vm.Status.Phase = vmv1.VmSucceeded
+	setVMStoppedCondition(vm)
 }
 
 func (r *VMReconciler) doVirtioMemScaling(

@@ -268,6 +268,74 @@ func TestRunningPod(t *testing.T) {
 	assert.Equal(t, vm.Status.Conditions[0].Type, typeAvailableVirtualMachine)
 }
 
+func TestStoppedPowerStateConvertsTerminalFailedToSucceeded(t *testing.T) {
+	params := newTestParams(t)
+	origVM := defaultVm()
+	origVM.Finalizers = append(origVM.Finalizers, virtualmachineFinalizer)
+	origVM.Spec.CpuScalingMode = lo.ToPtr(vmv1.CpuScalingModeQMP)
+	origVM.Spec.PowerState = vmv1.PowerStateStopped
+	origVM.Status.Phase = vmv1.VmFailed
+	origVM.Status.PodName = "deleted-runner"
+	origVM.Status.PodIP = "10.0.0.10"
+	origVM.Status.Node = "node-a"
+
+	origVM = params.initVM(origVM)
+
+	req := reconcile.Request{
+		NamespacedName: client.ObjectKeyFromObject(origVM),
+	}
+
+	res, err := params.r.Reconcile(params.ctx, req)
+	require.NoError(t, err)
+	assert.False(t, res.Requeue)
+
+	vm := params.getVM()
+	assert.Equal(t, vmv1.VmSucceeded, vm.Status.Phase)
+	assert.Empty(t, vm.Status.PodName)
+	assert.Empty(t, vm.Status.PodIP)
+	assert.Empty(t, vm.Status.Node)
+	require.Len(t, vm.Status.Conditions, 1)
+	assert.Equal(t, typeAvailableVirtualMachine, vm.Status.Conditions[0].Type)
+	assert.Equal(t, metav1.ConditionFalse, vm.Status.Conditions[0].Status)
+	assert.Equal(t, "PowerStateStopped", vm.Status.Conditions[0].Reason)
+}
+
+func TestRunningStopEventuallyConvergesToSucceeded(t *testing.T) {
+	params := newTestParams(t)
+	origVM := defaultVm()
+	origVM.Finalizers = append(origVM.Finalizers, virtualmachineFinalizer)
+	origVM.Spec.CpuScalingMode = lo.ToPtr(vmv1.CpuScalingModeQMP)
+	origVM.Spec.PowerState = vmv1.PowerStateStopped
+	origVM.Status.Phase = vmv1.VmRunning
+	origVM.Status.PodName = "missing-runner"
+	origVM.Status.PodIP = "10.0.0.10"
+	origVM.Status.Node = "node-a"
+	setVMStoppedCondition(origVM)
+
+	origVM = params.initVM(origVM)
+
+	req := reconcile.Request{
+		NamespacedName: client.ObjectKeyFromObject(origVM),
+	}
+
+	res, err := params.r.Reconcile(params.ctx, req)
+	require.NoError(t, err)
+	assert.False(t, res.Requeue)
+	assert.Equal(t, vmv1.VmFailed, params.getVM().Status.Phase)
+
+	res, err = params.r.Reconcile(params.ctx, req)
+	require.NoError(t, err)
+	assert.False(t, res.Requeue)
+
+	vm := params.getVM()
+	assert.Equal(t, vmv1.VmSucceeded, vm.Status.Phase)
+	assert.Empty(t, vm.Status.PodName)
+	assert.Empty(t, vm.Status.PodIP)
+	assert.Empty(t, vm.Status.Node)
+	require.Len(t, vm.Status.Conditions, 1)
+	assert.Equal(t, "PowerStateStopped", vm.Status.Conditions[0].Reason)
+}
+
 func TestNodeAffinity(t *testing.T) {
 	t.Run("no affinity", func(t *testing.T) {
 		origVM := defaultVm()
