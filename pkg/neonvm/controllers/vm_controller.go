@@ -508,23 +508,33 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 				}
 			}
 		case runnerSucceeded:
-			vm.Status.Phase = vmv1.VmSucceeded
-			meta.SetStatusCondition(&vm.Status.Conditions,
-				metav1.Condition{
-					Type:    typeAvailableVirtualMachine,
-					Status:  metav1.ConditionFalse,
-					Reason:  "Reconciling",
-					Message: fmt.Sprintf("Pod (%s) for VirtualMachine (%s) succeeded", vm.Status.PodName, vm.Name),
-				})
+			if !wantRunning {
+				vm.Cleanup()
+				setVMStopped(vm)
+			} else {
+				vm.Status.Phase = vmv1.VmSucceeded
+				meta.SetStatusCondition(&vm.Status.Conditions,
+					metav1.Condition{
+						Type:    typeAvailableVirtualMachine,
+						Status:  metav1.ConditionFalse,
+						Reason:  "Reconciling",
+						Message: fmt.Sprintf("Pod (%s) for VirtualMachine (%s) succeeded", vm.Status.PodName, vm.Name),
+					})
+			}
 		case runnerFailed:
-			vm.Status.Phase = vmv1.VmFailed
-			meta.SetStatusCondition(&vm.Status.Conditions,
-				metav1.Condition{
-					Type:    typeDegradedVirtualMachine,
-					Status:  metav1.ConditionTrue,
-					Reason:  "Reconciling",
-					Message: fmt.Sprintf("Pod (%s) for VirtualMachine (%s) failed", vm.Status.PodName, vm.Name),
-				})
+			if !wantRunning {
+				vm.Cleanup()
+				setVMStopped(vm)
+			} else {
+				vm.Status.Phase = vmv1.VmFailed
+				meta.SetStatusCondition(&vm.Status.Conditions,
+					metav1.Condition{
+						Type:    typeDegradedVirtualMachine,
+						Status:  metav1.ConditionTrue,
+						Reason:  "Reconciling",
+						Message: fmt.Sprintf("Pod (%s) for VirtualMachine (%s) failed", vm.Status.PodName, vm.Name),
+					})
+			}
 		default:
 			// do nothing
 		}
@@ -533,6 +543,11 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		vmRunner := &corev1.Pod{}
 		err := r.Get(ctx, types.NamespacedName{Name: vm.Status.PodName, Namespace: vm.Namespace}, vmRunner)
 		if err != nil && apierrors.IsNotFound(err) {
+			if !wantRunning {
+				vm.Cleanup()
+				setVMStopped(vm)
+				return nil
+			}
 			// lost runner pod for running VirtualMachine ?
 			log.Error(err, fmt.Sprintf("Runner pod not found even though VirtualMachine is %s", vm.Status.Phase))
 			vm.Status.Phase = vmv1.VmFailed
@@ -649,23 +664,33 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 			}
 			// do nothing otherwise
 		case runnerSucceeded:
-			vm.Status.Phase = vmv1.VmSucceeded
-			meta.SetStatusCondition(&vm.Status.Conditions,
-				metav1.Condition{
-					Type:    typeAvailableVirtualMachine,
-					Status:  metav1.ConditionFalse,
-					Reason:  "Reconciling",
-					Message: fmt.Sprintf("Pod (%s) for VirtualMachine (%s) succeeded", vm.Status.PodName, vm.Name),
-				})
+			if !wantRunning {
+				vm.Cleanup()
+				setVMStopped(vm)
+			} else {
+				vm.Status.Phase = vmv1.VmSucceeded
+				meta.SetStatusCondition(&vm.Status.Conditions,
+					metav1.Condition{
+						Type:    typeAvailableVirtualMachine,
+						Status:  metav1.ConditionFalse,
+						Reason:  "Reconciling",
+						Message: fmt.Sprintf("Pod (%s) for VirtualMachine (%s) succeeded", vm.Status.PodName, vm.Name),
+					})
+			}
 		case runnerFailed:
-			vm.Status.Phase = vmv1.VmFailed
-			meta.SetStatusCondition(&vm.Status.Conditions,
-				metav1.Condition{
-					Type:    typeDegradedVirtualMachine,
-					Status:  metav1.ConditionTrue,
-					Reason:  "Reconciling",
-					Message: fmt.Sprintf("Pod (%s) for VirtualMachine (%s) failed", vm.Status.PodName, vm.Name),
-				})
+			if !wantRunning {
+				vm.Cleanup()
+				setVMStopped(vm)
+			} else {
+				vm.Status.Phase = vmv1.VmFailed
+				meta.SetStatusCondition(&vm.Status.Conditions,
+					metav1.Condition{
+						Type:    typeDegradedVirtualMachine,
+						Status:  metav1.ConditionTrue,
+						Reason:  "Reconciling",
+						Message: fmt.Sprintf("Pod (%s) for VirtualMachine (%s) failed", vm.Status.PodName, vm.Name),
+					})
+			}
 		default:
 			// do nothing
 		}
@@ -675,6 +700,11 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		vmRunner := &corev1.Pod{}
 		err := r.Get(ctx, types.NamespacedName{Name: vm.Status.PodName, Namespace: vm.Namespace}, vmRunner)
 		if err != nil && apierrors.IsNotFound(err) {
+			if !wantRunning {
+				vm.Cleanup()
+				setVMStopped(vm)
+				return nil
+			}
 			// lost runner pod for running VirtualMachine ?
 			log.Error(err, fmt.Sprintf("Runner pod not found even though VirtualMachine is %s", vm.Status.Phase))
 			vm.Status.Phase = vmv1.VmFailed
@@ -801,9 +831,6 @@ func (r *VMReconciler) doReconcile(ctx context.Context, vm *vmv1.VirtualMachine)
 		//
 		// However, this opens up a possibility for cascading failures where the pods would be constantly
 		// recreated, and then stuck deleting. That's why we have AtMostOnePod.
-		if !wantRunning {
-			setVMStoppedCondition(vm)
-		}
 
 		if !r.Config.AtMostOnePod || apierrors.IsNotFound(err) {
 			// NB: Cleanup() leaves status .Phase and .RestartCount (+ some others) but unsets other fields.
