@@ -708,6 +708,9 @@ const (
 	// VmFailed means that all containers in the vm-runner pod have terminated, and at least one container has
 	// terminated in a failure (exited with a non-zero exit code or was stopped by the system).
 	VmFailed VmPhase = "Failed"
+	// VmStopped means the VM has been intentionally powered off and no vm-runner pod is expected
+	// to be running.
+	VmStopped VmPhase = "Stopped"
 	// VmPreMigrating means that VM in preparation to start migration
 	VmPreMigrating VmPhase = "PreMigrating"
 	// VmMigrating means that VM in migration to another node
