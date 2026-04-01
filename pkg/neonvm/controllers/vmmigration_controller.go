@@ -158,12 +158,17 @@ func (r *VirtualMachineMigrationReconciler) Reconcile(ctx context.Context, req c
 			log.Info("Performing Finalizer Operations for Migration")
 			vm, err := getVM()
 			if err != nil {
-				return ctrl.Result{}, err
-			}
-			if err := r.doFinalizerOperationsForVirtualMachineMigration(ctx, migration, vm); err != nil {
-				// if fail to delete the external dependency here, return with error
-				// so that it can be retried
-				return ctrl.Result{}, err
+				if !apierrors.IsNotFound(err) {
+					return ctrl.Result{}, err
+				}
+				// VM is already gone — nothing to cancel or reset, just remove the finalizer.
+				log.Info("VM not found during Migration finalizer cleanup; removing finalizer", "VmName", migration.Spec.VmName)
+			} else {
+				if err := r.doFinalizerOperationsForVirtualMachineMigration(ctx, migration, vm); err != nil {
+					// if fail to delete the external dependency here, return with error
+					// so that it can be retried
+					return ctrl.Result{}, err
+				}
 			}
 			// remove our finalizer from the list and update it.
 			log.Info("Removing Finalizer from Migration")
