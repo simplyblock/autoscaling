@@ -1570,6 +1570,26 @@ func podSpec(
 		},
 	)
 
+	// When PVC-backed block devices are present, the runner needs a
+	// ServiceAccount with permission to emit Events on PVCs (filesystem
+	// resize notifications).  Mount the token and default to the
+	// "neonvm-runner" SA unless the user already specified one.
+	hasBlockDevices := false
+	for _, disk := range vm.Spec.Disks {
+		if disk.BlockDevice != nil {
+			hasBlockDevices = true
+			break
+		}
+	}
+	serviceAccountName := vm.Spec.ServiceAccountName
+	automountToken := false
+	if hasBlockDevices {
+		automountToken = true
+		if serviceAccountName == "" {
+			serviceAccountName = "neonvm-runner"
+		}
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        vm.Status.PodName,
@@ -1579,13 +1599,13 @@ func podSpec(
 		},
 		Spec: corev1.PodSpec{
 			EnableServiceLinks:            vm.Spec.ServiceLinks,
-			AutomountServiceAccountToken:  lo.ToPtr(false),
+			AutomountServiceAccountToken:  lo.ToPtr(automountToken),
 			RestartPolicy:                 corev1.RestartPolicyNever,
 			TerminationGracePeriodSeconds: vm.Spec.TerminationGracePeriodSeconds,
 			NodeSelector:                  vm.Spec.NodeSelector,
 			ImagePullSecrets:              vm.Spec.ImagePullSecrets,
 			Tolerations:                   tolerations,
-			ServiceAccountName:            vm.Spec.ServiceAccountName,
+			ServiceAccountName:            serviceAccountName,
 			SchedulerName:                 vm.Spec.SchedulerName,
 			Affinity:                      affinity,
 			InitContainers: []corev1.Container{
@@ -1673,14 +1693,24 @@ func podSpec(
 						cmd = append(cmd, "-cpu-scaling-mode", string(*vm.Spec.CpuScalingMode))
 						return cmd
 					}(),
-					Env: []corev1.EnvVar{{
-						Name: "K8S_POD_NAME",
-						ValueFrom: &corev1.EnvVarSource{
-							FieldRef: &corev1.ObjectFieldSelector{
-								FieldPath: "metadata.name",
+					Env: []corev1.EnvVar{
+						{
+							Name: "K8S_POD_NAME",
+							ValueFrom: &corev1.EnvVarSource{
+								FieldRef: &corev1.ObjectFieldSelector{
+									FieldPath: "metadata.name",
+								},
 							},
 						},
-					}},
+						{
+							Name: "K8S_POD_NAMESPACE",
+							ValueFrom: &corev1.EnvVarSource{
+								FieldRef: &corev1.ObjectFieldSelector{
+									FieldPath: "metadata.namespace",
+								},
+							},
+						},
+					},
 					VolumeMounts: func() []corev1.VolumeMount {
 						images := corev1.VolumeMount{
 							Name:      "virtualmachineimages",

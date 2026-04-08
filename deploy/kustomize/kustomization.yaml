@@ -10,6 +10,8 @@ resources:
   - ../../neonvm-vxlan-controller
   # Runner image pre-loader
   - ../../neonvm-runner/image-loader/bases
+  # RBAC for runner pods to emit PVC resize events
+  - neonvm-runner-rbac.yaml
   # Autoscale scheduler + agent
   - ../../autoscale-scheduler
   - ../../autoscaler-agent
@@ -64,6 +66,30 @@ patches:
             value: neonvm-overlay-for-vms
           - name: NAD_RUNNER_NAMESPACE
             value: neonvm-system
+
+  # Place neonvm-runner RBAC in the namespace where VM pods run.
+  # For multi-namespace deployments, duplicate the SA/Role/RoleBinding per namespace.
+  - target:
+      kind: ServiceAccount
+      name: neonvm-runner
+    patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: default
+  - target:
+      kind: Role
+      name: neonvm-runner
+    patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: default
+  - target:
+      kind: RoleBinding
+      name: neonvm-runner
+    patch: |-
+      - op: add
+        path: /metadata/namespace
+        value: default
 
   # Ensure overlays land in neonvm-system
   - target:
